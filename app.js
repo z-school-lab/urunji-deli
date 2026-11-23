@@ -49,9 +49,20 @@ let draft = Object.assign(blankDraft(), store.get("draft", {}));
 let account = store.get("account", { name: "", phone: "" });
 let timer = null;
 let lastSig = "";
-let dispatch = { session: null, tab: "orders", orders: [], riders: [], settings: {}, loading: false };
+let dispatch = { session: null, tab: "orders", orders: [], riders: [], customers: [], settings: {}, loading: false };
 let R = { token: store.get("rtoken", null), data: null, mode: "login" };
 
+let cust = { key: "", blocked: false, limit: 150 };
+const pkey = (p) => String(p || "").replace(/\D/g, "").slice(-9);
+async function checkCust() {
+  const k = pkey(account.phone);
+  if (k.length < 9) { if (cust.key !== "") { cust = { key: "", blocked: false, limit: 150 }; if (location.hash === "#/pay") render(true); } return; }
+  try {
+    const r = await rpc("deli_customer_check", { p_phone: account.phone });
+    const n = { key: k, blocked: !!r.blocked, limit: r.cash_limit === null || r.cash_limit === undefined ? null : Number(r.cash_limit) };
+    if (JSON.stringify(n) !== JSON.stringify(cust)) { cust = n; if (location.hash === "#/pay") render(true); }
+  } catch {}
+}
 const saveDraft = () => store.set("draft", draft);
 const myOrders = () => store.get("orders", []);
 const addOrder = (code, service) => store.set("orders", [{ code, service, at: Date.now() }, ...myOrders().filter((o) => o.code !== code)].slice(0, 30));
@@ -152,14 +163,19 @@ function vPay() {
   const svc = draft.service || "delivery";
   const acc = account;
   const m = ["mtn", "airtel", "zamtel", "cash"];
+  const risk = money(svc) + (Number(String(draft.budget || "").replace(/[^0-9.]/g, "")) || 0);
+  const cashOff = cust.limit !== null && (cust.limit === 0 || risk >= cust.limit);
+  if (cashOff && draft.pay_method === "cash") draft.pay_method = "mtn";
   return `<div class="screen"><div class="pad">
     ${topbar("Pay", "#/" + svc)}
+    ${cust.blocked ? `<div class="note orange"><div><b>Sorry, we cannot take orders from this number right now.</b> Please call us on ${esc(CFG.SUPPORT_PHONE)}.</div></div>` : ""}
     <div class="card"><div class="rowline"><span>${SVC[svc]}</span><b>${K(fees[svc])}</b></div><div class="rowline"><span>Service fee</span><b>${K(fees.service)}</b></div><div class="hr"></div><div class="total"><span>Total</span><span>${K(money(svc))}</span></div></div>
     <div class="sec">Your details</div>
     <input class="input" data-bind-acc="name" placeholder="Your name" value="${esc(acc.name)}" autocomplete="name">
     <input class="input" data-bind-acc="phone" inputmode="tel" placeholder="Phone number e.g. 0977123456" value="${esc(acc.phone)}" autocomplete="tel">
     <div class="sec">How will you pay?</div>
-    ${m.map((k) => `<label class="pm ${draft.pay_method === k ? "on" : ""}"><span class="ic">${k === "cash" ? "K" : k === "mtn" ? "M" : k === "airtel" ? "A" : "Z"}</span><span class="nm">${PAY_NAME[k]}</span><input type="radio" name="pm" data-act="pm" data-v="${k}" ${draft.pay_method === k ? "checked" : ""}></label>`).join("")}
+    ${m.map((k) => `<label class="pm ${draft.pay_method === k ? "on" : ""}" ${k === "cash" && cashOff ? 'style="opacity:.4"' : ""}><span class="ic">${k === "cash" ? "K" : k === "mtn" ? "M" : k === "airtel" ? "A" : "Z"}</span><span class="nm">${PAY_NAME[k]}</span><input type="radio" name="pm" data-act="pm" data-v="${k}" ${draft.pay_method === k ? "checked" : ""} ${k === "cash" && cashOff ? "disabled" : ""}></label>`).join("")}
+    ${cashOff ? `<div class="note blue"><div>Cash is not available for this order. Please pay with mobile money. ${cust.limit ? "Cash is only for orders under " + K(cust.limit) + "." : ""}</div></div>` : ""}
     <div class="small">${draft.pay_method === "cash" ? "Pay the rider in cash when your order is done." : "After you order, we show you the number to send the money to. We confirm your payment by hand."}</div>
     <div class="spacer"></div>
     <button class="btn btn-green" data-act="place" id="placeBtn">Place order · ${K(money(svc))}</button>
@@ -256,7 +272,7 @@ function vDispatch() {
     <input class="input" id="sEmail" type="email" placeholder="Staff email" autocomplete="username">
     <input class="input" id="sPass" type="password" placeholder="Password" autocomplete="current-password">
     <button class="btn btn-green" data-act="login">Sign in</button></div></div>`;
-  const tabsHtml = ["orders", "riders", "settings"].map((t) => `<button class="chip ${D.tab === t ? "on" : ""}" data-act="dtab" data-v="${t}">${t[0].toUpperCase() + t.slice(1)}</button>`).join("");
+  const tabsHtml = ["orders", "customers", "riders", "settings"].map((t) => `<button class="chip ${D.tab === t ? "on" : ""}" data-act="dtab" data-v="${t}">${t[0].toUpperCase() + t.slice(1)}</button>`).join("");
   let body = "";
   if (D.tab === "orders") {
     const active = D.orders.filter((o) => !["delivered", "cancelled"].includes(o.status));
@@ -265,10 +281,14 @@ function vDispatch() {
       const trusted = o.service === "delivery" ? D.riders.filter((r) => r.active) : D.riders.filter((r) => r.active && r.trusted);
       const isOpen = !["delivered", "cancelled"].includes(o.status);
       const rider = D.riders.find((r) => r.id === o.rider_id);
-      return `<div class="d-order"><div class="d-row" style="justify-content:space-between"><b>${SVC[o.service]} · ${esc(o.code)}</b><span class="badge ${o.status === "delivered" ? "" : o.status === "cancelled" ? "g" : "o"}">${STATUS_TXT[o.status]}</span></div>
+      const ck = pkey(o.customer_phone); const cu = D.customers.find((c) => c.phone_key === ck);
+      const cst = cu ? cu.status : "new";
+      const clabel = cst === "new" ? (cu && cu.completed >= 3 ? "Regular" : "New customer") : cst[0].toUpperCase() + cst.slice(1);
+      return `<div class="d-order">${o.incident_level ? `<div class="note orange" style="border:2px solid #B3261E"><div><b style="color:#B3261E">${o.incident_level === "danger" ? "RIDER IN DANGER. Call them now." : "Rider reported a problem."}</b>${o.incident_note ? " " + esc(o.incident_note) : ""}${rider && rider.phone ? ` <a href="tel:${esc(rider.phone)}" style="color:#B3261E;font-weight:800">Call ${esc(rider.name)}</a>` : ""}<br><button class="btn btn-ghost btn-sm" data-act="clearinc" data-id="${o.id}">Clear alert</button></div></div>` : ""}<div class="d-row" style="justify-content:space-between"><b>${SVC[o.service]} · ${esc(o.code)}</b><span class="badge ${o.status === "delivered" ? "" : o.status === "cancelled" ? "g" : "o"}">${STATUS_TXT[o.status]}</span></div>
         <div class="t2">${esc(o.pickup)} → ${esc(o.dropoff)}</div>
         ${o.details ? `<div class="t2">Note: ${esc(o.details)}${o.budget ? " · Budget " + K(o.budget) : ""}</div>` : ""}
         <div class="t2">${esc(o.customer_name || "Customer")} · <a href="tel:${esc(o.customer_phone)}" style="color:var(--green);font-weight:700">${esc(o.customer_phone)}</a> · <a href="https://wa.me/${intl(o.customer_phone)}" target="_blank" rel="noopener" style="color:var(--green);font-weight:700">WhatsApp</a></div>
+        <div class="d-row"><span class="badge ${cst === "trusted" ? "" : cst === "new" ? "o" : "g"}">${clabel} · ${cu ? cu.completed : 0} done${cu && cu.incidents ? " · " + cu.incidents + " incident" + (cu.incidents > 1 ? "s" : "") : ""}</span>${cst !== "blocked" ? `<button class="btn btn-ghost btn-sm" data-act="cset" data-id="${ck}" data-v="watch">Watch</button><button class="btn btn-ghost btn-sm" style="color:#B3261E;border-color:#B3261E" data-act="cset" data-id="${ck}" data-v="blocked">Block</button>` : ""}</div>
         <div class="d-row"><span class="badge ${o.pay_status === "confirmed" ? "" : "o"}">${PAY_NAME[o.pay_method]}: ${o.pay_status}</span><b>${K(Number(o.delivery_fee) + Number(o.service_fee))}</b>
           ${o.pay_status !== "confirmed" && o.status !== "cancelled" ? `<button class="btn btn-ghost btn-sm" data-act="confirmpay" data-id="${o.id}">Mark paid</button>` : ""}</div>
         ${isOpen ? `<div class="d-row"><select class="input" id="rs-${o.id}" style="flex:1"><option value="">${rider ? esc(rider.name) : "Choose rider"}</option>${trusted.map((r) => `<option value="${r.id}" ${r.id === o.rider_id ? "selected" : ""}>${esc(r.name)}${r.trusted ? " ★" : ""}</option>`).join("")}</select>
@@ -280,8 +300,16 @@ function vDispatch() {
         ` : ""}
       </div>`;
     };
-    body = `<div class="sec">Active (${active.length})</div><div class="d-grid">${active.map(card).join("") || '<div class="small">No active orders.</div>'}</div>
+    const alerts = D.orders.filter((o) => o.incident_level === "danger" && ![ "delivered", "cancelled" ].includes(o.status));
+    body = `${alerts.length ? `<div class="note orange" style="border:2px solid #B3261E"><div><b style="color:#B3261E">ALERT: ${alerts.length} rider${alerts.length > 1 ? "s" : ""} in danger.</b> Order ${alerts.map((o) => esc(o.code)).join(", ")}. Call them now.</div></div>` : ""}<div class="sec">Active (${active.length})</div><div class="d-grid">${active.map(card).join("") || '<div class="small">No active orders.</div>'}</div>
       <div class="sec" style="margin-top:10px">Recent</div><div class="d-grid">${done.map(card).join("") || '<div class="small">Nothing yet.</div>'}</div>`;
+  } else if (D.tab === "customers") {
+    const lab = (c) => c.status === "new" ? (c.completed >= 3 ? "Regular" : "New") : c.status[0].toUpperCase() + c.status.slice(1);
+    const btn = (c, st, t) => c.status === st ? "" : `<button class="btn btn-ghost btn-sm" ${st === "blocked" ? 'style="color:#B3261E;border-color:#B3261E"' : ""} data-act="cset" data-id="${c.phone_key}" data-v="${st}">${t}</button>`;
+    body = `<div class="small">New customers can pay cash only for small orders. After 3 completed orders they become Regular. <b>Trusted</b> = cash allowed, any amount. <b>Watch</b> = mobile money only. <b>Blocked</b> = cannot order.</div>
+      <div class="d-grid" style="margin-top:12px">${D.customers.map((c) => `<div class="d-order"><div class="d-row" style="justify-content:space-between"><b>${esc(c.name || "No name")}</b><span class="badge ${c.status === "trusted" ? "" : c.status === "new" ? "o" : "g"}">${lab(c)}</span></div>
+        <div class="t2"><a href="tel:0${esc(c.phone_key)}" style="color:var(--green);font-weight:700">0${esc(c.phone_key)}</a> · ${c.completed} done · ${c.cancelled} cancelled · ${c.incidents} incident${c.incidents === 1 ? "" : "s"}</div>
+        <div class="d-row">${btn(c, "trusted", "Trusted")}${btn(c, "watch", "Watch")}${btn(c, "blocked", "Block")}${btn(c, "new", "Reset")}</div></div>`).join("") || '<div class="small">No customers yet.</div>'}</div>`;
   } else if (D.tab === "riders") {
     body = `<div class="d-order"><div class="sec">Add a rider</div><div class="d-row"><input class="input d-input" id="rN" placeholder="Name" style="flex:1;min-width:130px"><input class="input d-input" id="rP" placeholder="Phone" style="flex:1;min-width:130px"><input class="input d-input" id="rL" placeholder="Plate / bike" style="flex:1;min-width:110px"><input class="input d-input" id="rI" inputmode="numeric" maxlength="6" placeholder="Login PIN (4-6 digits)" style="flex:1;min-width:140px"></div>
       <label class="d-row small"><input type="checkbox" id="rT"> Trusted rider (can take errands and rides)</label><button class="btn btn-green btn-sm" data-act="addrider">Add rider</button></div>
@@ -290,7 +318,7 @@ function vDispatch() {
   } else {
     const s = D.settings;
     const f = (k, l) => `<div><label class="lbl">${l}</label><input class="input d-input" id="st-${k}" value="${esc(s[k] ?? "")}"></div>`;
-    body = `<div class="d-order"><div class="sec">Prices (Kwacha)</div>${f("fee_delivery", "Delivery fee")}${f("fee_errand", "Errand fee")}${f("fee_ride", "Ride fare")}${f("fee_service", "Service fee")}
+    body = `<div class="d-order"><div class="sec">Prices (Kwacha)</div>${f("fee_delivery", "Delivery fee")}${f("fee_errand", "Errand fee")}${f("fee_ride", "Ride fare")}${f("fee_service", "Service fee")}${f("cash_limit_new", "Cash limit for new customers (K)")}
       <div class="sec" style="margin-top:8px">Where customers send money</div>${f("pay_to_mtn", "MTN MoMo number")}${f("pay_to_airtel", "Airtel Money number")}${f("pay_to_zamtel", "Zamtel Kwacha number")}
       <button class="btn btn-green" data-act="savesettings">Save settings</button></div>`;
   }
@@ -301,13 +329,14 @@ function vDispatch() {
 async function loadDispatch(keepFocus) {
   if (!sb || !dispatch.session) return;
   if (keepFocus && $app.contains(document.activeElement) && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
-  const [o, r, s] = await Promise.all([
+  const [o, r, s, cs] = await Promise.all([
     sb.from("deli_orders").select("*").order("created_at", { ascending: false }).limit(80),
     sb.from("deli_riders").select("*").order("name"),
     sb.from("deli_settings").select("*"),
+    sb.from("deli_customers").select("*").order("updated_at", { ascending: false }).limit(150),
   ]);
   if (o.error) { toast(o.error.message.includes("permission") || o.error.code === "42501" ? "This email is not on the staff list." : o.error.message); return; }
-  dispatch.orders = o.data || []; dispatch.riders = r.data || [];
+  dispatch.orders = o.data || []; dispatch.riders = r.data || []; dispatch.customers = cs.data || [];
   dispatch.settings = Object.fromEntries((s.data || []).map((x) => [x.key, x.value]));
   render(true);
 }
@@ -332,13 +361,18 @@ function vRider() {
   const job = (o) => {
     const next = o.status === "accepted" ? ["picked_up", "Picked up"] : o.status === "picked_up" ? ["on_the_way", "On the way"] : null;
     return `<div class="d-order"><div class="d-row" style="justify-content:space-between"><b>${SVC[o.service]} · ${esc(o.code)}</b><span class="badge o">${STATUS_TXT[o.status]}</span></div>
+      ${o.incident ? `<div class="note orange"><div><b>${o.incident === "danger" ? "You reported danger. Staff have been told." : "Problem reported. Staff have been told."}</b></div></div>` : ""}
+      ${o.cust === "watch" ? `<div class="note orange"><div><b>Watch customer.</b> Be careful. Deliver in a public place.</div></div>` : o.cust === "new" ? `<div class="note blue"><div><b>New customer</b> (${o.cust_done || 0} orders so far). Do not go into their house.</div></div>` : ""}
+      ${o.hold ? `<div class="note orange"><div><b>Do not leave yet.</b> This customer has not paid. Staff must confirm payment first.</div></div>` : ""}
       <div class="t2"><b>From:</b> ${esc(o.pickup)}</div><div class="t2"><b>To:</b> ${esc(o.dropoff)}</div>
       ${o.details ? `<div class="t2"><b>Note:</b> ${esc(o.details)}${o.budget ? " · Items budget " + K(o.budget) : ""}</div>` : ""}
       ${o.item_type ? `<div class="t2">${esc(o.item_type)}${o.item_size ? " · " + esc(o.item_size) : ""}</div>` : ""}
       <div class="d-row"><span class="badge ${o.pay_status === "confirmed" ? "" : "o"}">${o.pay_method === "cash" ? "Collect cash: " + K(o.total) : PAY_NAME[o.pay_method] + (o.pay_status === "confirmed" ? " paid" : " awaiting")}</span></div>
       <div class="d-row"><a class="btn btn-ghost btn-sm" href="tel:${esc(o.customer_phone)}">Call ${esc(o.customer_name || "customer")}</a><a class="btn btn-ghost btn-sm" href="https://wa.me/${intl(o.customer_phone)}" target="_blank" rel="noopener">WhatsApp</a></div>
-      ${next ? `<button class="btn btn-green" data-act="rdstage" data-id="${o.id}" data-v="${next[0]}">${next[1]}</button>` : ""}
+      ${next && !o.hold ? `<button class="btn btn-green" data-act="rdstage" data-id="${o.id}" data-v="${next[0]}">${next[1]}</button>` : ""}
       ${o.status === "on_the_way" || o.status === "picked_up" ? `<div class="d-row"><input class="input d-input" id="rc-${o.id}" inputmode="numeric" maxlength="4" placeholder="Customer's 4-digit code" style="flex:1"><button class="btn btn-orange btn-sm" data-act="rdcomplete" data-id="${o.id}">Complete</button></div>` : ""}
+      <div class="d-row"><input class="input d-input" id="rn-${o.id}" placeholder="What is the problem? (optional)" style="flex:1"></div>
+      <div class="d-row"><button class="btn btn-ghost btn-sm" data-act="rdreport" data-id="${o.id}" data-v="problem">Problem with customer</button><button class="btn btn-sm" style="background:#B3261E;color:#fff" data-act="rdreport" data-id="${o.id}" data-v="danger">I am in danger</button></div>
     </div>`;
   };
   const avail = (o) => `<div class="d-order"><div class="d-row" style="justify-content:space-between"><b>${SVC[o.service]} · ${K(o.total)}</b><span class="badge">${o.pay_method === "cash" ? "Cash" : PAY_NAME[o.pay_method]}</span></div>
@@ -379,7 +413,7 @@ async function render(soft) {
     case "delivery": case "errand": case "ride":
       if (draft.service !== route) { draft = Object.assign(blankDraft(), { service: route, pay_method: draft.pay_method || "mtn" }); saveDraft(); }
       html = vBook(route); break;
-    case "pay": html = vPay(); break;
+    case "pay": html = vPay(); if (!soft) checkCust(); break;
     case "track": case "delivered": return renderOrder(route, arg, soft);
     case "orders": return renderOrders(soft);
     case "help": html = vHelp(); break;
@@ -431,6 +465,8 @@ $app.addEventListener("input", (e) => {
   if (t.dataset.bindAcc) { account[t.dataset.bindAcc] = t.value; store.set("account", account); }
 });
 
+$app.addEventListener("change", (e) => { if (e.target.dataset && e.target.dataset.bindAcc === "phone") checkCust(); });
+
 $app.addEventListener("click", async (e) => {
   const el = e.target.closest("[data-act]");
   if (!el) return;
@@ -447,6 +483,7 @@ $app.addEventListener("click", async (e) => {
   }
   else if (a === "place") {
     const svc = draft.service || "delivery";
+    if (cust.blocked) return toast("Sorry, we cannot take this order right now. Please call us.");
     if (account.name.trim().length < 2) return toast("Please enter your name");
     if (String(account.phone).replace(/\D/g, "").length < 9) return toast("Please enter a valid phone number");
     el.disabled = true; el.textContent = "Placing order…";
@@ -494,6 +531,11 @@ $app.addEventListener("click", async (e) => {
   else if (a === "rdcomplete") {
     try { const ok = await rpc("deli_rider_complete", { p_token: R.token, p_id: id, p_code: document.getElementById("rc-" + id).value }); toast(ok ? "Delivered. Well done!" : "That code does not match"); loadRider(); } catch (err) { toast(err.message); }
   }
+  else if (a === "rdreport") {
+    if (v === "danger" && !twice("g" + id, "Tap I am in danger again to alert staff")) return;
+    const nEl = document.getElementById("rn-" + id);
+    try { await rpc("deli_rider_report", { p_token: R.token, p_id: id, p_level: v, p_note: nEl ? nEl.value : "" }); toast(v === "danger" ? "Staff alerted. Stay safe. Call us if you can." : "Reported. Staff have been told."); loadRider(); } catch (err) { toast(err.message); }
+  }
   else if (a === "rdlogout") { R.token = null; R.data = null; store.set("rtoken", null); render(); }
   /* staff */
   else if (a === "login") {
@@ -516,6 +558,12 @@ $app.addEventListener("click", async (e) => {
     const { error } = await sb.from("deli_orders").update({ status: v }).eq("id", id);
     error ? toast(error.message) : loadDispatch();
   }
+  else if (a === "cset") {
+    if (v === "blocked" && !twice("b" + id, "Tap Block again to block this customer")) return;
+    const { error } = await sb.from("deli_customers").update({ status: v }).eq("phone_key", id);
+    error ? toast(error.message) : (toast("Saved"), loadDispatch());
+  }
+  else if (a === "clearinc") { const { error } = await sb.from("deli_orders").update({ incident_level: null }).eq("id", id); error ? toast(error.message) : loadDispatch(); }
   else if (a === "confirmpay") { const { error } = await sb.from("deli_orders").update({ pay_status: "confirmed" }).eq("id", id); error ? toast(error.message) : loadDispatch(); }
   else if (a === "complete") {
     try { const ok = await rpc("deli_complete_order", { p_id: id, p_code: document.getElementById("dc-" + id).value }); ok ? (toast("Order completed"), loadDispatch()) : toast("That code does not match"); } catch (err) { toast(err.message); }
@@ -537,9 +585,9 @@ $app.addEventListener("click", async (e) => {
   else if (a === "rtrust") { await sb.from("deli_riders").update({ trusted: v === "1" }).eq("id", id); loadDispatch(); }
   else if (a === "ractive") { await sb.from("deli_riders").update({ active: v === "1" }).eq("id", id); loadDispatch(); }
   else if (a === "savesettings") {
-    const keys = ["fee_delivery", "fee_errand", "fee_ride", "fee_service", "pay_to_mtn", "pay_to_airtel", "pay_to_zamtel"];
+    const keys = ["fee_delivery", "fee_errand", "fee_ride", "fee_service", "cash_limit_new", "pay_to_mtn", "pay_to_airtel", "pay_to_zamtel"];
     const rows = keys.map((k) => ({ key: k, value: document.getElementById("st-" + k).value.trim() }));
-    for (const r of rows.slice(0, 4)) if (!(Number(r.value) >= 0) || r.value === "") return toast("Prices must be numbers");
+    for (const r of rows.slice(0, 5)) if (!(Number(r.value) >= 0) || r.value === "") return toast("Prices must be numbers");
     const { error } = await sb.from("deli_settings").upsert(rows);
     error ? toast(error.message) : (toast("Saved"), loadFees(), loadDispatch());
   }
