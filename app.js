@@ -50,6 +50,7 @@ let account = store.get("account", { name: "", phone: "" });
 let timer = null;
 let lastSig = "";
 let dispatch = { session: null, tab: "orders", orders: [], riders: [], settings: {}, loading: false };
+let R = { token: store.get("rtoken", null), data: null, mode: "login" };
 
 const saveDraft = () => store.set("draft", draft);
 const myOrders = () => store.get("orders", []);
@@ -240,6 +241,7 @@ function vAccount() {
     <input class="input" data-bind-acc="name" placeholder="Your name" value="${esc(account.name)}">
     <input class="input" data-bind-acc="phone" inputmode="tel" placeholder="Phone number" value="${esc(account.phone)}">
     <button class="btn btn-green" data-act="saveacc">Save</button>
+    <a class="btn btn-ghost" href="#/rider">Rider sign-in</a>
     <a class="btn btn-ghost" href="#/dispatch">Staff sign-in</a>${powered}</div>${tabs("account")}</div>`;
 }
 
@@ -277,10 +279,10 @@ function vDispatch() {
     body = `<div class="sec">Active (${active.length})</div><div class="d-grid">${active.map(card).join("") || '<div class="small">No active orders.</div>'}</div>
       <div class="sec" style="margin-top:10px">Recent</div><div class="d-grid">${done.map(card).join("") || '<div class="small">Nothing yet.</div>'}</div>`;
   } else if (D.tab === "riders") {
-    body = `<div class="d-order"><div class="sec">Add a rider</div><div class="d-row"><input class="input d-input" id="rN" placeholder="Name" style="flex:1;min-width:130px"><input class="input d-input" id="rP" placeholder="Phone" style="flex:1;min-width:130px"><input class="input d-input" id="rL" placeholder="Plate / bike" style="flex:1;min-width:110px"></div>
+    body = `<div class="d-order"><div class="sec">Add a rider</div><div class="d-row"><input class="input d-input" id="rN" placeholder="Name" style="flex:1;min-width:130px"><input class="input d-input" id="rP" placeholder="Phone" style="flex:1;min-width:130px"><input class="input d-input" id="rL" placeholder="Plate / bike" style="flex:1;min-width:110px"><input class="input d-input" id="rI" inputmode="numeric" maxlength="6" placeholder="Login PIN (4-6 digits)" style="flex:1;min-width:140px"></div>
       <label class="d-row small"><input type="checkbox" id="rT"> Trusted rider (can take errands and rides)</label><button class="btn btn-green btn-sm" data-act="addrider">Add rider</button></div>
-      <div class="d-grid" style="margin-top:12px">${D.riders.map((r) => `<div class="d-order"><div class="d-row" style="justify-content:space-between"><b>${esc(r.name)} ${r.trusted ? "★" : ""}</b><span class="badge ${r.active ? "" : "g"}">${r.active ? "Active" : "Off"}</span></div><div class="t2">${esc(r.phone || "")} · ${esc(r.plate || "")}</div>
-        <div class="d-row"><button class="btn btn-ghost btn-sm" data-act="rtrust" data-id="${r.id}" data-v="${r.trusted ? 0 : 1}">${r.trusted ? "Remove trusted" : "Make trusted"}</button><button class="btn btn-ghost btn-sm" data-act="ractive" data-id="${r.id}" data-v="${r.active ? 0 : 1}">${r.active ? "Switch off" : "Switch on"}</button></div></div>`).join("")}</div>`;
+      <div class="d-grid" style="margin-top:12px">${D.riders.map((r) => `<div class="d-order"><div class="d-row" style="justify-content:space-between"><b>${esc(r.name)} ${r.trusted ? "★" : ""}</b><span class="badge ${r.approved === false ? "o" : r.active ? "" : "g"}">${r.approved === false ? "Waiting for approval" : r.active ? (r.online ? "Online" : "Active") : "Off"}</span></div><div class="t2">${esc(r.phone || "")} · ${esc(r.plate || "")}</div>
+        <div class="d-row">${r.approved === false ? `<button class="btn btn-green btn-sm" data-act="rapprove" data-id="${r.id}">Approve</button>` : ""}<button class="btn btn-ghost btn-sm" data-act="rsetpin" data-id="${r.id}">Set PIN</button><button class="btn btn-ghost btn-sm" data-act="rtrust" data-id="${r.id}" data-v="${r.trusted ? 0 : 1}">${r.trusted ? "Remove trusted" : "Make trusted"}</button><button class="btn btn-ghost btn-sm" data-act="ractive" data-id="${r.id}" data-v="${r.active ? 0 : 1}">${r.active ? "Switch off" : "Switch on"}</button></div></div>`).join("")}</div>`;
   } else {
     const s = D.settings;
     const f = (k, l) => `<div><label class="lbl">${l}</label><input class="input d-input" id="st-${k}" value="${esc(s[k] ?? "")}"></div>`;
@@ -306,6 +308,59 @@ async function loadDispatch(keepFocus) {
   render(true);
 }
 
+/* ---------- rider page ---------- */
+function vRider() {
+  if (!R.token) {
+    const reg = R.mode === "register";
+    return `<div class="screen"><div class="pad">${topbar(reg ? "Rider sign-up" : "Rider sign-in", "#/account")}
+      <div class="note green">${ic("bike", "#1B6B35")}<div>${reg ? "Join our riders. We will call you to approve your account." : "Sign in with your phone number and PIN."}</div></div>
+      ${reg ? '<input class="input" id="gName" placeholder="Your full name" autocomplete="name">' : ""}
+      <input class="input" id="gPhone" inputmode="tel" placeholder="Phone number" autocomplete="tel">
+      ${reg ? '<input class="input" id="gPlate" placeholder="Bike plate number (optional)">' : ""}
+      <input class="input" id="gPin" type="password" inputmode="numeric" maxlength="6" placeholder="${reg ? "Choose a PIN (4 to 6 digits)" : "Your PIN"}">
+      <button class="btn btn-green" data-act="${reg ? "rdregister" : "rdlogin"}">${reg ? "Sign up" : "Sign in"}</button>
+      <button class="btn btn-ghost" data-act="rdmode" data-v="${reg ? "login" : "register"}">${reg ? "I already have an account" : "New rider? Sign up"}</button>
+    </div></div>`;
+  }
+  const d = R.data;
+  if (!d) return `<div class="screen"><div class="center-msg"><div class="spin"></div><div>Loading…</div></div></div>`;
+  const me = d.me;
+  const job = (o) => {
+    const next = o.status === "accepted" ? ["picked_up", "Picked up"] : o.status === "picked_up" ? ["on_the_way", "On the way"] : null;
+    return `<div class="d-order"><div class="d-row" style="justify-content:space-between"><b>${SVC[o.service]} · ${esc(o.code)}</b><span class="badge o">${STATUS_TXT[o.status]}</span></div>
+      <div class="t2"><b>From:</b> ${esc(o.pickup)}</div><div class="t2"><b>To:</b> ${esc(o.dropoff)}</div>
+      ${o.details ? `<div class="t2"><b>Note:</b> ${esc(o.details)}${o.budget ? " · Items budget " + K(o.budget) : ""}</div>` : ""}
+      ${o.item_type ? `<div class="t2">${esc(o.item_type)}${o.item_size ? " · " + esc(o.item_size) : ""}</div>` : ""}
+      <div class="d-row"><span class="badge ${o.pay_status === "confirmed" ? "" : "o"}">${o.pay_method === "cash" ? "Collect cash: " + K(o.total) : PAY_NAME[o.pay_method] + (o.pay_status === "confirmed" ? " paid" : " awaiting")}</span></div>
+      <div class="d-row"><a class="btn btn-ghost btn-sm" href="tel:${esc(o.customer_phone)}">Call ${esc(o.customer_name || "customer")}</a><a class="btn btn-ghost btn-sm" href="https://wa.me/${intl(o.customer_phone)}" target="_blank" rel="noopener">WhatsApp</a></div>
+      ${next ? `<button class="btn btn-green" data-act="rdstage" data-id="${o.id}" data-v="${next[0]}">${next[1]}</button>` : ""}
+      ${o.status === "on_the_way" || o.status === "picked_up" ? `<div class="d-row"><input class="input d-input" id="rc-${o.id}" inputmode="numeric" maxlength="4" placeholder="Customer's 4-digit code" style="flex:1"><button class="btn btn-orange btn-sm" data-act="rdcomplete" data-id="${o.id}">Complete</button></div>` : ""}
+    </div>`;
+  };
+  const avail = (o) => `<div class="d-order"><div class="d-row" style="justify-content:space-between"><b>${SVC[o.service]} · ${K(o.total)}</b><span class="badge">${o.pay_method === "cash" ? "Cash" : PAY_NAME[o.pay_method]}</span></div>
+      <div class="t2"><b>From:</b> ${esc(o.pickup)}</div><div class="t2"><b>To:</b> ${esc(o.dropoff)}</div>${o.details ? `<div class="t2">${esc(o.details)}</div>` : ""}
+      <button class="btn btn-green" data-act="rdaccept" data-id="${o.id}">Accept job</button></div>`;
+  return `<div class="screen"><div class="hhead"><div class="brand"><div class="tile"><img src="logo.png" alt=""></div><b>Rider</b></div>
+      <div><div style="font-size:24px;font-weight:800">Hi, ${esc(me.name.split(" ")[0])}</div><div style="opacity:.9;font-size:14px">Delivered today: ${d.done_today}${me.trusted ? " · Trusted rider" : ""}</div></div></div>
+    <div class="pad" style="padding-top:18px">
+      <button class="btn ${me.online ? "btn-orange" : "btn-green"}" data-act="rdonline" data-v="${me.online ? 0 : 1}">${me.online ? "You are ONLINE. Tap to go offline" : "Go online to get jobs"}</button>
+      <div class="sec">My jobs (${d.mine.length})</div>
+      ${d.mine.map(job).join("") || '<div class="small">No active jobs.</div>'}
+      <div class="sec">New jobs (${d.available.length})</div>
+      ${me.online ? (d.available.map(avail).join("") || '<div class="small">No new jobs right now. This page updates by itself.</div>') : '<div class="small">Go online to see new jobs.</div>'}
+      <button class="btn btn-ghost" data-act="rdlogout">Sign out</button>
+    </div></div>`;
+}
+async function loadRider(keepFocus) {
+  if (!R.token) return;
+  if (keepFocus && $app.contains(document.activeElement) && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
+  try {
+    const d = await rpc("deli_rider_jobs", { p_token: R.token });
+    if (d && d.error) { R.token = null; R.data = null; store.set("rtoken", null); toast("Please sign in again"); } else R.data = d;
+  } catch (e) { toast(e.message); }
+  if (location.hash.startsWith("#/rider")) render(true);
+}
+
 /* ---------- router ---------- */
 function stopTimer() { clearInterval(timer); timer = null; }
 
@@ -325,6 +380,10 @@ async function render(soft) {
     case "orders": return renderOrders(soft);
     case "help": html = vHelp(); break;
     case "account": html = vAccount(); break;
+    case "rider":
+      html = vRider();
+      if (!soft && R.token) { loadRider(); timer = setInterval(() => loadRider(true), 8000); }
+      break;
     case "dispatch":
       html = vDispatch();
       if (!soft) {
@@ -404,6 +463,30 @@ $app.addEventListener("click", async (e) => {
   else if (a === "rate") {
     try { await rpc("deli_rate", { p_stars: Number(v), p_code: el.dataset.code }); toast("Thanks for rating!"); lastSig = ""; render(true); } catch (err) { toast(err.message); }
   }
+  /* rider */
+  else if (a === "rdmode") { R.mode = v; render(true); }
+  else if (a === "rdlogin") {
+    try {
+      const r = await rpc("deli_rider_login", { p_phone: document.getElementById("gPhone").value, p_pin: document.getElementById("gPin").value });
+      if (r.error) return toast(r.error);
+      R.token = r.token; store.set("rtoken", r.token); R.data = null; render();
+    } catch (err) { toast(err.message); }
+  }
+  else if (a === "rdregister") {
+    try {
+      await rpc("deli_rider_register", { p_name: document.getElementById("gName").value, p_phone: document.getElementById("gPhone").value, p_plate: document.getElementById("gPlate").value, p_pin: document.getElementById("gPin").value });
+      R.mode = "login"; render(true); toast("Thanks! We will call you once you are approved.");
+    } catch (err) { toast(err.message); }
+  }
+  else if (a === "rdonline") { try { await rpc("deli_rider_online", { p_token: R.token, p_online: v === "1" }); loadRider(); } catch (err) { toast(err.message); } }
+  else if (a === "rdaccept") {
+    try { const ok = await rpc("deli_rider_accept", { p_token: R.token, p_id: id }); toast(ok ? "Job accepted" : "Sorry, this job was taken"); loadRider(); } catch (err) { toast(err.message); loadRider(); }
+  }
+  else if (a === "rdstage") { try { await rpc("deli_rider_stage", { p_token: R.token, p_id: id, p_stage: v }); loadRider(); } catch (err) { toast(err.message); } }
+  else if (a === "rdcomplete") {
+    try { const ok = await rpc("deli_rider_complete", { p_token: R.token, p_id: id, p_code: document.getElementById("rc-" + id).value }); toast(ok ? "Delivered. Well done!" : "That code does not match"); loadRider(); } catch (err) { toast(err.message); }
+  }
+  else if (a === "rdlogout") { R.token = null; R.data = null; store.set("rtoken", null); render(); }
   /* staff */
   else if (a === "login") {
     const { data, error } = await sb.auth.signInWithPassword({ email: document.getElementById("sEmail").value.trim(), password: document.getElementById("sPass").value });
@@ -430,8 +513,17 @@ $app.addEventListener("click", async (e) => {
   }
   else if (a === "addrider") {
     const name = document.getElementById("rN").value.trim(); if (!name) return toast("Enter a name");
-    const { error } = await sb.from("deli_riders").insert({ name, phone: document.getElementById("rP").value.trim(), plate: document.getElementById("rL").value.trim(), trusted: document.getElementById("rT").checked });
-    error ? toast(error.message) : (toast("Rider added"), loadDispatch());
+    const pin = document.getElementById("rI").value.trim();
+    if (pin && !/^[0-9]{4,6}$/.test(pin)) return toast("PIN must be 4 to 6 digits");
+    const { data: nr, error } = await sb.from("deli_riders").insert({ name, phone: document.getElementById("rP").value.trim(), plate: document.getElementById("rL").value.trim(), trusted: document.getElementById("rT").checked }).select().single();
+    if (error) return toast(error.message);
+    if (pin) { try { await rpc("deli_staff_set_pin", { p_rider: nr.id, p_pin: pin }); } catch (err) { toast(err.message); } }
+    toast(pin ? "Rider added" : "Rider added. Set a PIN so they can sign in."); loadDispatch();
+  }
+  else if (a === "rapprove") { await sb.from("deli_riders").update({ approved: true, active: true }).eq("id", id); toast("Rider approved"); loadDispatch(); }
+  else if (a === "rsetpin") {
+    const pin = prompt("New PIN for this rider (4 to 6 digits)"); if (!pin) return;
+    try { await rpc("deli_staff_set_pin", { p_rider: id, p_pin: pin.trim() }); toast("PIN saved"); } catch (err) { toast(err.message); }
   }
   else if (a === "rtrust") { await sb.from("deli_riders").update({ trusted: v === "1" }).eq("id", id); loadDispatch(); }
   else if (a === "ractive") { await sb.from("deli_riders").update({ active: v === "1" }).eq("id", id); loadDispatch(); }
