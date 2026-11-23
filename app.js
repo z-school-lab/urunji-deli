@@ -193,9 +193,10 @@ function vTrack(o) {
       ${r ? `<div class="rider"><div class="avatar">${esc(initials(r.name))}</div><div class="grow"><div class="t1">${esc(r.name)}</div><div class="t2">${esc(r.plate || "Your rider")}</div></div>
         ${r.phone ? `<a class="circle" href="tel:${esc(r.phone)}" aria-label="Call rider">${ic("phone", "#0B1F3A", 20)}</a><a class="circle g" href="https://wa.me/${intl(r.phone)}" target="_blank" rel="noopener" aria-label="WhatsApp rider">${ic("chat", "#fff", 20)}</a>` : ""}</div>`
       : o.status === "placed" ? `<div class="note blue"><div>We are finding you a rider. This page updates by itself.</div></div>` : ""}
-      ${o.status !== "delivered" && o.status !== "cancelled" ? `<div class="codebox"><div><div class="t1">${label}</div><div class="small">Tell the rider this code only when you get your ${o.service === "ride" ? "ride" : "order"}.</div></div><div class="digits">${String(o.delivery_code).split("").map((d) => `<span>${d}</span>`).join("")}</div></div>` : ""}
+      ${o.status !== "delivered" && o.status !== "cancelled" ? `<div class="codebox"><div><div class="t1">${label}</div><div class="small">When you get your ${o.service === "ride" ? "ride" : "order"}, tap the green button below, or give the rider this code.</div></div><div class="digits">${String(o.delivery_code).split("").map((d) => `<span>${d}</span>`).join("")}</div></div>` : ""}
       ${payBox}
       <div class="card"><div class="rowline"><span>From</span><b>${esc(o.pickup)}</b></div><div class="rowline"><span>To</span><b>${esc(o.dropoff)}</b></div>${o.details ? `<div class="rowline"><span>Note</span><b>${esc(o.details)}</b></div>` : ""}</div>
+      ${o.status === "picked_up" || o.status === "on_the_way" ? `<button class="btn btn-green" data-act="received" data-code="${esc(o.code)}">${o.service === "ride" ? "I have arrived safely" : "I have received my order"}</button>` : ""}
       ${o.status === "delivered" ? `<a class="btn btn-green" href="#/delivered/${esc(o.code)}">Rate your rider</a>` : ""}
       <a class="btn btn-ghost" href="https://wa.me/${intl(CFG.SUPPORT_PHONE)}?text=${encodeURIComponent("Hello Urunji Deli, order " + o.code)}" target="_blank" rel="noopener">Need help? WhatsApp us</a>
     </div></div>`;
@@ -267,11 +268,12 @@ function vDispatch() {
         ${o.details ? `<div class="t2">Note: ${esc(o.details)}${o.budget ? " · Budget " + K(o.budget) : ""}</div>` : ""}
         <div class="t2">${esc(o.customer_name || "Customer")} · <a href="tel:${esc(o.customer_phone)}" style="color:var(--green);font-weight:700">${esc(o.customer_phone)}</a> · <a href="https://wa.me/${intl(o.customer_phone)}" target="_blank" rel="noopener" style="color:var(--green);font-weight:700">WhatsApp</a></div>
         <div class="d-row"><span class="badge ${o.pay_status === "confirmed" ? "" : "o"}">${PAY_NAME[o.pay_method]}: ${o.pay_status}</span><b>${K(Number(o.delivery_fee) + Number(o.service_fee))}</b>
-          ${o.pay_status !== "confirmed" && isOpen ? `<button class="btn btn-ghost btn-sm" data-act="confirmpay" data-id="${o.id}">Mark paid</button>` : ""}</div>
+          ${o.pay_status !== "confirmed" && o.status !== "cancelled" ? `<button class="btn btn-ghost btn-sm" data-act="confirmpay" data-id="${o.id}">Mark paid</button>` : ""}</div>
         ${isOpen ? `<div class="d-row"><select class="input" id="rs-${o.id}" style="flex:1"><option value="">${rider ? esc(rider.name) : "Choose rider"}</option>${trusted.map((r) => `<option value="${r.id}" ${r.id === o.rider_id ? "selected" : ""}>${esc(r.name)}${r.trusted ? " ★" : ""}</option>`).join("")}</select>
           <button class="btn btn-green btn-sm" data-act="assign" data-id="${o.id}">Assign</button></div>
         <div class="d-row">${o.status === "accepted" ? `<button class="btn btn-ghost btn-sm" data-act="status" data-id="${o.id}" data-v="picked_up">Picked up</button>` : ""}
           ${["accepted", "picked_up"].includes(o.status) ? `<button class="btn btn-ghost btn-sm" data-act="status" data-id="${o.id}" data-v="on_the_way">On the way</button>` : ""}
+          ${o.status !== "placed" ? `<button class="btn btn-orange btn-sm" data-act="status" data-id="${o.id}" data-v="delivered">Mark delivered</button>` : ""}
           <button class="btn btn-ghost btn-sm" style="color:#B3261E;border-color:#B3261E" data-act="status" data-id="${o.id}" data-v="cancelled">Cancel</button></div>
         ${["accepted", "picked_up", "on_the_way"].includes(o.status) ? `<div class="d-row"><input class="input d-input" id="dc-${o.id}" inputmode="numeric" maxlength="4" placeholder="Customer's 4-digit code" style="flex:1"><button class="btn btn-orange btn-sm" data-act="complete" data-id="${o.id}">Complete</button></div>` : ""}` : ""}
       </div>`;
@@ -460,6 +462,10 @@ $app.addEventListener("click", async (e) => {
   }
   else if (a === "saveacc") { store.set("account", account); toast("Saved"); }
   else if (a === "findcode") { const c = document.getElementById("codeIn").value.trim().toUpperCase(); if (c) { addOrder(c, "delivery"); location.hash = "#/track/" + c; } }
+  else if (a === "received") {
+    if (!confirm(el.textContent.trim() + "?")) return;
+    try { await rpc("deli_confirm_received", { p_code: el.dataset.code }); toast("Thank you!"); location.hash = "#/delivered/" + el.dataset.code; } catch (err) { toast(err.message); }
+  }
   else if (a === "rate") {
     try { await rpc("deli_rate", { p_stars: Number(v), p_code: el.dataset.code }); toast("Thanks for rating!"); lastSig = ""; render(true); } catch (err) { toast(err.message); }
   }
