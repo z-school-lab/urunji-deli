@@ -273,9 +273,9 @@ function vDispatch() {
           <button class="btn btn-green btn-sm" data-act="assign" data-id="${o.id}">Assign</button></div>
         <div class="d-row">${o.status === "accepted" ? `<button class="btn btn-ghost btn-sm" data-act="status" data-id="${o.id}" data-v="picked_up">Picked up</button>` : ""}
           ${["accepted", "picked_up"].includes(o.status) ? `<button class="btn btn-ghost btn-sm" data-act="status" data-id="${o.id}" data-v="on_the_way">On the way</button>` : ""}
-          ${o.status !== "placed" ? `<button class="btn btn-orange btn-sm" data-act="status" data-id="${o.id}" data-v="delivered">Mark delivered</button>` : ""}
+          <button class="btn btn-orange btn-sm" data-act="status" data-id="${o.id}" data-v="delivered">Complete order</button>
           <button class="btn btn-ghost btn-sm" style="color:#B3261E;border-color:#B3261E" data-act="status" data-id="${o.id}" data-v="cancelled">Cancel</button></div>
-        ${["accepted", "picked_up", "on_the_way"].includes(o.status) ? `<div class="d-row"><input class="input d-input" id="dc-${o.id}" inputmode="numeric" maxlength="4" placeholder="Customer's 4-digit code" style="flex:1"><button class="btn btn-orange btn-sm" data-act="complete" data-id="${o.id}">Complete</button></div>` : ""}` : ""}
+        ` : ""}
       </div>`;
     };
     body = `<div class="sec">Active (${active.length})</div><div class="d-grid">${active.map(card).join("") || '<div class="small">No active orders.</div>'}</div>
@@ -510,6 +510,7 @@ $app.addEventListener("click", async (e) => {
   }
   else if (a === "status") {
     if (v === "cancelled" && !confirm("Cancel this order?")) return;
+    if (v === "delivered" && !confirm("Mark this order as completed?")) return;
     const { error } = await sb.from("deli_orders").update({ status: v }).eq("id", id);
     error ? toast(error.message) : loadDispatch();
   }
