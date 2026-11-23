@@ -39,7 +39,19 @@ const I = {
   pin: '<path d="M12 21s7-6 7-11a7 7 0 10-14 0c0 5 7 11 7 11z"/><circle cx="12" cy="10" r="2.5"/>',
   gift: '<path d="M4 9h16v4H4zM5 13h14v7H5zM12 9v11M12 9c-3 0-4-4-1-4 2 0 1 4 1 4zm0 0c3 0 4-4 1-4-2 0-1 4-1 4z"/>',
   shield: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6l8-3z"/><path d="M8.5 12l2.5 2.5L15.5 10"/>',
+  shop: '<path d="M4 9l1.2-5h13.6L20 9H4zM5 9v11h14V9M9.5 20v-5h5v5"/>',
+  cake: '<path d="M4 20h16v-6H4zM6 14v-3h12v3M12 11V7M12 7c-1-1-1-2 0-3 1 1 1 2 0 3z"/>',
+  food: '<path d="M4 11h16a8 8 0 01-16 0zM8 7c0-1 1-1 1-2M12 7c0-1 1-1 1-2M16 7c0-1 1-1 1-2"/>',
+  cart: '<path d="M3 4h2l2.5 11h10L20 8H6.5M9 20h.01M17 20h.01"/>',
 };
+const CAT = {
+  grocery: { name: "Groceries", icon: "bag", bg: "var(--green-t)", fg: "#1B6B35" },
+  bakery: { name: "Cakes & bakery", icon: "cake", bg: "var(--orange-t)", fg: "#C8700F" },
+  food: { name: "Food & takeaways", icon: "food", bg: "var(--blue-t)", fg: "#0B1F3A" },
+  other: { name: "Other shops", icon: "shop", bg: "#EEE9F7", fg: "#5B2A86" },
+};
+const MST = { pending: "New order", accepted: "Preparing", ready: "Ready for rider", declined: "Declined" };
+const itemsText = (items) => (items || []).map((i) => i.qty + " x " + i.name).join(", ");
 const ic = (n, c = "currentColor", s = 24) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[n] || ""}</svg>`;
 
 /* ---------- state ---------- */
@@ -49,8 +61,16 @@ let draft = Object.assign(blankDraft(), store.get("draft", {}));
 let account = store.get("account", { name: "", phone: "" });
 let timer = null;
 let lastSig = "";
-let dispatch = { session: null, tab: "orders", orders: [], riders: [], customers: [], passes: [], settings: {}, loading: false };
+let dispatch = { session: null, tab: "orders", orders: [], riders: [], customers: [], passes: [], merchants: [], owed: [], settings: {}, loading: false };
 let R = { token: store.get("rtoken", null), data: null, mode: "login" };
+let M = { token: store.get("mtoken", null), data: null, mode: "login", tab: "orders" };
+let shopsData = null, shopFilter = "all";
+const menuCache = {};
+let cart = Object.assign({ mid: null, name: "", lines: {}, dropoff: "", details: "", pay: "mtn" }, store.get("cart", {}));
+const saveCart = () => store.set("cart", cart);
+const cartCount = () => Object.values(cart.lines).reduce((a, l) => a + l.qty, 0);
+const cartTotal = () => Object.values(cart.lines).reduce((a, l) => a + l.qty * l.price, 0);
+const safeImg = (u) => (/^https:\/\//.test(String(u || "")) ? u : "");
 
 const todayLusaka = () => new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Lusaka" });
 let cust = { key: "", blocked: false, limit: 150 };
@@ -79,6 +99,7 @@ const rpc = async (fn, args) => {
 /* ---------- shared pieces ---------- */
 const tabs = (on) => `<nav class="tabs">
   <a href="#/home" class="${on === "home" ? "on" : ""}">${ic("home")}Home</a>
+  <a href="#/shops" class="${on === "shops" ? "on" : ""}">${ic("shop")}Shops</a>
   <a href="#/orders" class="${on === "orders" ? "on" : ""}">${ic("list")}Orders</a>
   <a href="#/help" class="${on === "help" ? "on" : ""}">${ic("help")}Help</a>
   <a href="#/account" class="${on === "account" ? "on" : ""}">${ic("user")}Account</a>
@@ -104,6 +125,66 @@ function vWelcome() {
   </div></div>`;
 }
 
+const shopTile = (s) => {
+  const c = CAT[s.category] || CAT.other; const img = safeImg(s.image_url);
+  return `<a class="shopcard ${s.is_open ? "" : "closed"}" href="#/shop/${s.id}"><div class="stile" style="background:${c.bg};color:${c.fg}">${img ? `<img src="${esc(img)}" alt="">` : ic(c.icon, c.fg, 36)}${s.featured ? '<span class="star-tag">Featured</span>' : ""}</div>
+    <div class="sname">${esc(s.name)}</div><div class="smeta">${esc(c.name)}</div><span class="badge ${s.is_open ? "" : "g"}" style="align-self:flex-start">${s.is_open ? "Open now" : "Closed"}</span></a>`;
+};
+const shopsBanner = () => `<a class="shopbanner" href="#/shops"><div class="ic">${ic("shop", "#fff", 28)}</div><div class="grow"><div style="font-weight:800;font-size:17px">Order from local shops</div><div style="font-size:13px;opacity:.92">Groceries, cakes, shawarma and more, delivered.</div></div><span class="seeall-w">Browse</span></a>`
+  + (shopsData && shopsData.length ? `<div class="row-between"><div class="sec" style="margin:0">Shops on Urunji Deli</div><a class="seeall" href="#/shops">See all</a></div><div class="shopscroll">${shopsData.slice(0, 10).map(shopTile).join("")}</div>` : "");
+
+function vShops() {
+  const cats = [["all", "All"], ["grocery", "Groceries"], ["bakery", "Cakes & bakery"], ["food", "Food & takeaways"], ["other", "Other"]];
+  const shown = (shopsData || []).filter((x) => shopFilter === "all" || x.category === shopFilter);
+  return `<div class="screen"><div class="pad" style="padding-bottom:12px">${topbar("Shops")}
+    <div class="chips nowrap">${cats.map(([k, n]) => `<button class="chip ${shopFilter === k ? "on" : ""}" data-act="shopcat" data-v="${k}">${n}</button>`).join("")}</div>
+    ${shopsData === null ? `<div class="center-msg"><div class="spin"></div><div>Loading shops…</div></div>` : shown.length ? `<div class="shopgrid">${shown.map(shopTile).join("")}</div>` : `<div class="center-msg"><div class="t1">No shops here yet</div><div class="small">New shops are joining. Check back soon.</div></div>`}
+    <div class="card"><div class="t1">Own a shop?</div><div class="small">Grocery, cakes, shawarma, takeaways. Sell on Urunji Deli and we deliver for you.</div><a class="btn btn-ghost" href="#/merchant">Shop sign-in or sign-up</a></div>
+    ${powered}</div>${tabs("shops")}</div>`;
+}
+
+function vShop(id) {
+  const m = menuCache[id];
+  if (m === undefined) return `<div class="screen"><div class="center-msg"><div class="spin"></div><div>Loading…</div></div></div>`;
+  if (m === null) return `<div class="screen"><div class="pad">${topbar("Shop", "#/shops")}<div class="center-msg"><div class="t1">This shop is not available</div><a class="btn btn-green" href="#/shops" style="max-width:220px">All shops</a></div></div></div>`;
+  const sh = m.shop, c = CAT[sh.category] || CAT.other, img = safeImg(sh.image_url);
+  const mine = cart.mid === id ? cart.lines : {};
+  const row = (i) => { const q = mine[i.id] ? mine[i.id].qty : 0;
+    return `<div class="item"><div class="grow"><div class="t1">${esc(i.name)}</div>${i.description ? `<div class="t2">${esc(i.description)}</div>` : ""}<div class="price">${K(i.price)}</div></div>
+      ${!sh.is_open ? "" : q ? `<div class="stepper"><button data-act="cartsub" data-id="${i.id}" data-mid="${id}" aria-label="Less">−</button><b>${q}</b><button data-act="cartadd" data-id="${i.id}" data-mid="${id}" aria-label="More">+</button></div>` : `<button class="btn btn-green btn-sm" data-act="cartadd" data-id="${i.id}" data-mid="${id}">Add</button>`}</div>`; };
+  const n = cart.mid === id ? cartCount() : 0;
+  return `<div class="screen"><div class="pad" style="padding-bottom:90px">${topbar(sh.name, "#/shops")}
+    <div class="shophead"><div class="stile big" style="background:${c.bg};color:${c.fg}">${img ? `<img src="${esc(img)}" alt="">` : ic(c.icon, c.fg, 44)}</div>
+      <div class="grow"><div class="t1">${esc(c.name)} · <span style="color:${sh.is_open ? "var(--green)" : "#B3261E"}">${sh.is_open ? "Open now" : "Closed"}</span></div>${sh.address ? `<div class="t2">${esc(sh.address)}</div>` : ""}${sh.description ? `<div class="t2">${esc(sh.description)}</div>` : ""}</div></div>
+    ${!sh.is_open ? `<div class="note orange"><div><b>This shop is closed right now.</b> Please come back later.</div></div>` : ""}
+    ${m.items.length ? m.items.map(row).join("") : `<div class="center-msg"><div class="small">No items on the menu yet.</div></div>`}
+    ${n ? `<a class="cartbar" href="#/basket"><span>${ic("cart", "#fff", 22)} ${n} item${n > 1 ? "s" : ""}</span><b>View basket · ${K(cartTotal())}</b></a>` : ""}
+  </div></div>`;
+}
+
+function vBasket() {
+  const lines = Object.entries(cart.lines);
+  if (!cart.mid || !lines.length) return `<div class="screen"><div class="pad">${topbar("Basket", "#/shops")}<div class="center-msg"><div class="t1">Your basket is empty</div><a class="btn btn-green" href="#/shops" style="max-width:220px">Browse shops</a></div></div></div>`;
+  const fee = fees.delivery || 0, sf = fees.service || 0, total = cartTotal() + fee + sf;
+  return `<div class="screen"><div class="pad">${topbar("Your basket", "#/shop/" + cart.mid)}
+    ${cust.blocked ? `<div class="note orange"><div><b>Sorry, we cannot take orders from this number right now.</b> Please call us on ${esc(CFG.SUPPORT_PHONE)}.</div></div>` : ""}
+    <div class="t1">${esc(cart.name)}</div>
+    <div class="card">${lines.map(([id, l]) => `<div class="item slim"><div class="grow"><div class="t1">${esc(l.name)}</div><div class="t2">${K(l.price)} each</div></div><div class="stepper"><button data-act="cartsub" data-id="${id}" data-mid="${cart.mid}" aria-label="Less">−</button><b>${l.qty}</b><button data-act="cartadd" data-id="${id}" data-mid="${cart.mid}" aria-label="More">+</button></div></div>`).join("")}
+      <div class="hr"></div><div class="rowline"><span>Items</span><b>${K(cartTotal())}</b></div><div class="rowline"><span>Delivery</span><b>${K(fee)}</b></div>${sf > 0 ? `<div class="rowline"><span>Service fee</span><b>${K(sf)}</b></div>` : ""}<div class="hr"></div><div class="total"><span>Total</span><span>${K(total)}</span></div></div>
+    <div class="sec">Where should we deliver?</div>
+    <input class="input" data-bind-cart="dropoff" value="${esc(cart.dropoff)}" placeholder="Your place or landmark">
+    <textarea class="input" rows="2" data-bind-cart="details" placeholder="Note for the rider (optional)">${esc(cart.details)}</textarea>
+    <div class="sec">Your details</div>
+    <input class="input" data-bind-acc="name" placeholder="Your name" value="${esc(account.name)}" autocomplete="name">
+    <input class="input" data-bind-acc="phone" inputmode="tel" placeholder="Phone number e.g. 0977123456" value="${esc(account.phone)}" autocomplete="tel">
+    <div class="sec">Pay with mobile money</div>
+    ${["mtn", "airtel", "zamtel"].map((k) => `<label class="pm ${cart.pay === k ? "on" : ""}"><span class="ic">${k === "mtn" ? "M" : k === "airtel" ? "A" : "Z"}</span><span class="nm">${PAY_NAME[k]}</span><input type="radio" name="spm" data-act="shoppm" data-v="${k}" ${cart.pay === k ? "checked" : ""}></label>`).join("")}
+    <div class="small">After you order, we show you the number to send the money to. The shop starts preparing once your payment is confirmed.</div>
+    <div class="spacer"></div>
+    <button class="btn btn-green" data-act="placeshop" id="placeShopBtn">Place order · ${K(total)}</button>
+  </div></div>`;
+}
+
 function vHome() {
   const act = myOrders();
   return `<div class="screen">
@@ -116,6 +197,7 @@ function vHome() {
         <a class="tile-btn" href="#/errand"><div class="ic" style="background:var(--orange-t)">${ic("bike", "#C8700F", 28)}</div>Errand</a>
         <a class="tile-btn" href="#/ride"><div class="ic" style="background:var(--blue-t)">${ic("car", "#0B1F3A", 28)}</div>Ride</a>
       </div>
+      ${shopsBanner()}
       <div class="promo"><div class="ic">${ic("gift", "#0B1F3A", 26)}</div>
         <div><div style="font-weight:800;font-size:16px">Launch offer</div>
         <div style="font-size:13px;opacity:.9;line-height:1.35">Ask us on WhatsApp for your first-order deal.</div></div></div>
@@ -192,8 +274,9 @@ function stepBar(status) {
 function vTrack(o) {
   if (o === undefined) return `<div class="screen"><div class="center-msg"><div class="spin"></div><div>Loading your order…</div></div></div>`;
   if (o === null) return `<div class="screen"><div class="pad">${topbar("Track", "#/orders")}<div class="center-msg"><div class="t1">We could not find that order</div><div class="small">Check the tracking code and try again.</div><a class="btn btn-green" href="#/orders" style="max-width:220px">My orders</a></div></div></div>`;
-  const total = Number(o.delivery_fee) + Number(o.service_fee);
+  const total = Number(o.delivery_fee) + Number(o.service_fee) + Number(o.items_total || 0);
   const r = o.rider;
+  const shopNote = !o.shop ? "" : o.merchant_status === "pending" ? `Waiting for ${esc(o.shop.name)} to accept your order.` : o.merchant_status === "accepted" ? `${esc(o.shop.name)} is preparing your order.` : o.merchant_status === "ready" ? "Your order is ready. The rider is collecting it." : o.merchant_status === "declined" ? "Sorry, the shop could not take this order." : "";
   const label = o.service === "ride" ? "Trip code" : "Delivery code";
   let payBox = "";
   if (o.status === "cancelled") payBox = `<div class="note orange"><div><b>This order was cancelled.</b></div></div>`;
@@ -211,9 +294,11 @@ function vTrack(o) {
       ${o.status !== "cancelled" ? stepBar(o.status) : ""}
       ${r ? `<div class="rider"><div class="avatar">${esc(initials(r.name))}</div><div class="grow"><div class="t1">${esc(r.name)}</div><div class="t2">${esc(r.plate || "Your rider")}</div></div>
         ${r.phone ? `<a class="circle" href="tel:${esc(r.phone)}" aria-label="Call rider">${ic("phone", "#0B1F3A", 20)}</a><a class="circle g" href="https://wa.me/${intl(r.phone)}" target="_blank" rel="noopener" aria-label="WhatsApp rider">${ic("chat", "#fff", 20)}</a>` : ""}</div>`
-      : o.status === "placed" ? `<div class="note blue"><div>We are finding you a rider. This page updates by itself.</div></div>` : ""}
+      : o.status === "placed" ? `<div class="note blue"><div>${o.shop ? shopNote + " " : ""}${o.merchant_status === "pending" || o.merchant_status === "declined" ? "" : "We are finding you a rider. "}This page updates by itself.</div></div>` : ""}
+      ${o.shop && o.status !== "placed" && o.status !== "cancelled" && shopNote && o.merchant_status !== "ready" ? `<div class="note blue"><div>${shopNote}</div></div>` : ""}
       ${o.status !== "delivered" && o.status !== "cancelled" ? `<div class="codebox"><div><div class="t1">${label}</div><div class="small">When you get your ${o.service === "ride" ? "ride" : "order"}, tap the green button below, or give the rider this code.</div></div><div class="digits">${String(o.delivery_code).split("").map((d) => `<span>${d}</span>`).join("")}</div></div>` : ""}
       ${payBox}
+      ${o.items && o.items.length ? `<div class="card">${o.items.map((i) => `<div class="rowline"><span>${i.qty} × ${esc(i.name)}</span><b>${K(i.qty * i.price)}</b></div>`).join("")}<div class="hr"></div><div class="rowline"><span>Items</span><b>${K(o.items_total)}</b></div><div class="rowline"><span>Delivery</span><b>${K(o.delivery_fee)}</b></div>${Number(o.service_fee) > 0 ? `<div class="rowline"><span>Service fee</span><b>${K(o.service_fee)}</b></div>` : ""}</div>` : ""}
       <div class="card"><div class="rowline"><span>From</span><b>${esc(o.pickup)}</b></div><div class="rowline"><span>To</span><b>${esc(o.dropoff)}</b></div>${o.details ? `<div class="rowline"><span>Note</span><b>${esc(o.details)}</b></div>` : ""}</div>
       ${o.status === "picked_up" || o.status === "on_the_way" ? `<button class="btn btn-green" data-act="received" data-code="${esc(o.code)}">${o.service === "ride" ? "I have arrived safely" : "I have received my order"}</button>` : ""}
       ${o.status === "delivered" ? `<a class="btn btn-green" href="#/delivered/${esc(o.code)}">Rate your rider</a>` : ""}
@@ -229,7 +314,7 @@ function vDelivered(o) {
     <div class="pad">
       <div class="card" style="align-items:center;text-align:center"><div class="sec">${rated ? "Thanks for your rating" : "How was your rider?"}</div>
         <div class="stars">${[1, 2, 3, 4, 5].map((n) => `<button class="star" data-act="rate" data-v="${n}" data-code="${esc(o.code)}" ${rated ? "disabled" : ""} aria-label="${n} stars">${ic("star", n <= (rated || 0) ? "#F28C28" : "#C9D3CB", 40).replace('fill="none"', `fill="${n <= (rated || 0) ? "#F28C28" : "none"}"`)}</button>`).join("")}</div></div>
-      <div class="card"><div class="rowline"><span>Order</span><b>${esc(o.code)}</b></div><div class="rowline"><span>Total</span><b>${K(Number(o.delivery_fee) + Number(o.service_fee))}</b></div></div>
+      <div class="card"><div class="rowline"><span>Order</span><b>${esc(o.code)}</b></div><div class="rowline"><span>Total</span><b>${K(Number(o.delivery_fee) + Number(o.service_fee) + Number(o.items_total || 0))}</b></div></div>
       <div class="spacer"></div>
       <a class="btn btn-green" href="#/home">Back to home</a>
     </div></div>`;
@@ -262,6 +347,7 @@ function vAccount() {
     <input class="input" data-bind-acc="phone" inputmode="tel" placeholder="Phone number" value="${esc(account.phone)}">
     <button class="btn btn-green" data-act="saveacc">Save</button>
     <a class="btn btn-ghost" href="#/rider">Rider sign-in</a>
+    <a class="btn btn-ghost" href="#/merchant">Shop sign-in</a>
     <a class="btn btn-ghost" href="#/dispatch">Staff sign-in</a>${powered}</div>${tabs("account")}</div>`;
 }
 
@@ -273,7 +359,7 @@ function vDispatch() {
     <input class="input" id="sEmail" type="email" placeholder="Staff email" autocomplete="username">
     <input class="input" id="sPass" type="password" placeholder="Password" autocomplete="current-password">
     <button class="btn btn-green" data-act="login">Sign in</button></div></div>`;
-  const tabsHtml = ["orders", "customers", "riders", "settings"].map((t) => `<button class="chip ${D.tab === t ? "on" : ""}" data-act="dtab" data-v="${t}">${t[0].toUpperCase() + t.slice(1)}</button>`).join("");
+  const tabsHtml = ["orders", "customers", "riders", "merchants", "settings"].map((t) => `<button class="chip ${D.tab === t ? "on" : ""}" data-act="dtab" data-v="${t}">${t[0].toUpperCase() + t.slice(1)}</button>`).join("");
   let body = "";
   if (D.tab === "orders") {
     const active = D.orders.filter((o) => !["delivered", "cancelled"].includes(o.status));
@@ -287,10 +373,11 @@ function vDispatch() {
       const clabel = cst === "new" ? (cu && cu.completed >= 3 ? "Regular" : "New customer") : cst[0].toUpperCase() + cst.slice(1);
       return `<div class="d-order">${o.incident_level ? `<div class="note orange" style="border:2px solid #B3261E"><div><b style="color:#B3261E">${o.incident_level === "danger" ? "RIDER IN DANGER. Call them now." : "Rider reported a problem."}</b>${o.incident_note ? " " + esc(o.incident_note) : ""}${rider && rider.phone ? ` <a href="tel:${esc(rider.phone)}" style="color:#B3261E;font-weight:800">Call ${esc(rider.name)}</a>` : ""}<br><button class="btn btn-ghost btn-sm" data-act="clearinc" data-id="${o.id}">Clear alert</button></div></div>` : ""}<div class="d-row" style="justify-content:space-between"><b>${SVC[o.service]} · ${esc(o.code)}</b><span class="badge ${o.status === "delivered" ? "" : o.status === "cancelled" ? "g" : "o"}">${STATUS_TXT[o.status]}</span></div>
         <div class="t2">${esc(o.pickup)} → ${esc(o.dropoff)}</div>
+        ${o.merchant_id ? `<div class="note blue"><div><b>Shop order · ${esc((D.merchants.find((m) => m.id === o.merchant_id) || {}).name || "Shop")}</b> · ${MST[o.merchant_status] || ""}<br>${esc(itemsText(o.items))}<br>Items ${K(o.items_total)} + delivery ${K(Number(o.delivery_fee) + Number(o.service_fee))}. Shop gets ${K(Number(o.items_total) - Number(o.commission))}.</div></div>` : ""}
         ${o.details ? `<div class="t2">Note: ${esc(o.details)}${o.budget ? " · Budget " + K(o.budget) : ""}</div>` : ""}
         <div class="t2">${esc(o.customer_name || "Customer")} · <a href="tel:${esc(o.customer_phone)}" style="color:var(--green);font-weight:700">${esc(o.customer_phone)}</a> · <a href="https://wa.me/${intl(o.customer_phone)}" target="_blank" rel="noopener" style="color:var(--green);font-weight:700">WhatsApp</a></div>
         <div class="d-row"><span class="badge ${cst === "trusted" ? "" : cst === "new" ? "o" : "g"}">${clabel} · ${cu ? cu.completed : 0} done${cu && cu.incidents ? " · " + cu.incidents + " incident" + (cu.incidents > 1 ? "s" : "") : ""}</span>${cst !== "blocked" ? `<button class="btn btn-ghost btn-sm" data-act="cset" data-id="${ck}" data-v="watch">Watch</button><button class="btn btn-ghost btn-sm" style="color:#B3261E;border-color:#B3261E" data-act="cset" data-id="${ck}" data-v="blocked">Block</button>` : ""}</div>
-        <div class="d-row"><span class="badge ${o.pay_status === "confirmed" ? "" : "o"}">${PAY_NAME[o.pay_method]}: ${o.pay_status}</span><b>${K(Number(o.delivery_fee) + Number(o.service_fee))}</b>
+        <div class="d-row"><span class="badge ${o.pay_status === "confirmed" ? "" : "o"}">${PAY_NAME[o.pay_method]}: ${o.pay_status}</span><b>${K(Number(o.delivery_fee) + Number(o.service_fee) + Number(o.items_total || 0))}</b>
           ${o.pay_status !== "confirmed" && o.status !== "cancelled" ? `<button class="btn btn-ghost btn-sm" data-act="confirmpay" data-id="${o.id}">Mark paid</button>` : ""}</div>
         ${isOpen ? `<div class="d-row"><select class="input" id="rs-${o.id}" style="flex:1"><option value="">${rider ? esc(rider.name) : "Choose rider"}</option>${trusted.map((r) => `<option value="${r.id}" ${r.id === o.rider_id ? "selected" : ""}>${esc(r.name)}${r.trusted ? " ★" : ""}</option>`).join("")}</select>
           <button class="btn btn-green btn-sm" data-act="assign" data-id="${o.id}">Assign</button></div>
@@ -318,7 +405,21 @@ function vDispatch() {
       <label class="d-row small"><input type="checkbox" id="rT"> Trusted rider (can take errands and rides)</label><button class="btn btn-green btn-sm" data-act="addrider">Add rider</button></div>
       <div class="d-grid" style="margin-top:12px">${D.riders.map((r) => `<div class="d-order"><div class="d-row" style="justify-content:space-between"><b>${esc(r.name)} ${r.trusted ? "★" : ""}</b><span class="badge ${r.approved === false ? "o" : r.active ? "" : "g"}">${r.approved === false ? "Waiting for approval" : r.active ? (r.online ? "Online" : "Active") : "Off"}</span></div><div class="t2">${esc(r.phone || "")} · ${esc(r.plate || "")}</div>
         ${(() => { const tp = D.passes.find((p) => p.rider_id === r.id && p.pass_date === todayLusaka()); const lp = D.passes.find((p) => p.rider_id === r.id && p.status === "confirmed"); return `<div class="d-row"><span class="badge ${tp && tp.status === "confirmed" ? "" : "o"}">${tp ? (tp.status === "confirmed" ? "Pass paid today" : "Pass waiting: ref " + esc(tp.ref)) : "No pass today"}</span>${tp && tp.status === "awaiting" ? `<button class="btn btn-green btn-sm" data-act="passok" data-id="${tp.id}">Confirm paid</button>` : !tp ? `<button class="btn btn-ghost btn-sm" data-act="passgive" data-id="${r.id}">Record pass paid</button>` : ""}${!tp && lp ? `<span class="t2">Last: ${esc(lp.pass_date)}</span>` : ""}</div>`; })()}
-        <div class="d-row">${r.approved === false ? `<button class="btn btn-green btn-sm" data-act="rapprove" data-id="${r.id}">Approve</button>` : ""}<button class="btn btn-ghost btn-sm" data-act="rsetpin" data-id="${r.id}">Set PIN</button><button class="btn btn-ghost btn-sm" data-act="rtrust" data-id="${r.id}" data-v="${r.trusted ? 0 : 1}">${r.trusted ? "Remove trusted" : "Make trusted"}</button><button class="btn btn-ghost btn-sm" data-act="ractive" data-id="${r.id}" data-v="${r.active ? 0 : 1}">${r.active ? "Switch off" : "Switch on"}</button></div></div>`).join("")}</div>`;
+        <div class="d-row">${r.approved === false ? `<button class="btn btn-green btn-sm" data-act="rapprove" data-id="${r.id}">Approve</button>` : ""}<input class="input d-input" id="rp-${r.id}" inputmode="numeric" maxlength="6" placeholder="New PIN" style="width:100px"><button class="btn btn-ghost btn-sm" data-act="rsetpin" data-id="${r.id}">Set PIN</button><button class="btn btn-ghost btn-sm" data-act="rtrust" data-id="${r.id}" data-v="${r.trusted ? 0 : 1}">${r.trusted ? "Remove trusted" : "Make trusted"}</button><button class="btn btn-ghost btn-sm" data-act="ractive" data-id="${r.id}" data-v="${r.active ? 0 : 1}">${r.active ? "Switch off" : "Switch on"}</button></div></div>`).join("")}</div>`;
+  } else if (D.tab === "merchants") {
+    const owedBy = {};
+    D.owed.forEach((x) => { const e = owedBy[x.merchant_id] || (owedBy[x.merchant_id] = { n: 0, amt: 0, ids: [] }); e.n++; e.amt += Number(x.items_total) - Number(x.commission); e.ids.push(x.id); });
+    body = `<div class="small">Customers pay Urunji Deli. After an order is delivered, you pay the shop its share (items minus commission) and tap <b>Mark paid out</b>.</div>
+      <div class="d-order" style="margin-top:12px"><div class="sec">Add a shop</div><div class="d-row"><input class="input d-input" id="nmN" placeholder="Shop name" style="flex:1;min-width:140px"><input class="input d-input" id="nmP" placeholder="Phone" style="flex:1;min-width:120px"></div>
+        <div class="d-row"><select class="input d-input" id="nmC" style="flex:1"><option value="grocery">Groceries</option><option value="bakery">Cakes &amp; bakery</option><option value="food">Food &amp; takeaways</option><option value="other">Other</option></select><input class="input d-input" id="nmA" placeholder="Address / landmark" style="flex:2;min-width:140px"></div>
+        <div class="d-row"><input class="input d-input" id="nmI" inputmode="numeric" maxlength="6" placeholder="Login PIN (4-6 digits)" style="flex:1;min-width:140px"><input class="input d-input" id="nmM" inputmode="decimal" value="10" placeholder="Commission %" style="flex:1;min-width:110px"></div>
+        <label class="d-row small"><input type="checkbox" id="nmF"> Featured (shown first)</label><button class="btn btn-green btn-sm" data-act="addshop">Add shop</button></div>
+      <div class="d-grid" style="margin-top:12px">${D.merchants.map((m) => { const ow = owedBy[m.id]; return `<div class="d-order"><div class="d-row" style="justify-content:space-between"><b>${esc(m.name)} ${m.featured ? "★" : ""}</b><span class="badge ${m.approved === false ? "o" : m.active ? "" : "g"}">${m.approved === false ? "Waiting for approval" : m.active ? (m.is_open ? "Open" : "Closed") : "Off"}</span></div>
+        <div class="t2">${esc((CAT[m.category] || CAT.other).name)} · <a href="tel:${esc(m.phone || "")}" style="color:var(--green);font-weight:700">${esc(m.phone || "")}</a> · ${esc(m.address || "")}</div>
+        <div class="d-row"><span class="badge ${ow ? "o" : ""}">${ow ? "Owed to shop: " + K(ow.amt) + " (" + ow.n + " order" + (ow.n > 1 ? "s" : "") + ")" : "Nothing owed"}</span>${ow ? `<button class="btn btn-orange btn-sm" data-act="mpaid" data-id="${m.id}">Mark paid out</button>` : ""}</div>
+        <div class="d-row">${m.approved === false ? `<button class="btn btn-green btn-sm" data-act="mapprove" data-id="${m.id}">Approve</button>` : ""}<button class="btn btn-ghost btn-sm" data-act="mfeat" data-id="${m.id}" data-v="${m.featured ? 0 : 1}">${m.featured ? "Unfeature" : "Feature"}</button><button class="btn btn-ghost btn-sm" data-act="mactive" data-id="${m.id}" data-v="${m.active ? 0 : 1}">${m.active ? "Switch off" : "Switch on"}</button></div>
+        <div class="d-row"><input class="input d-input" id="mc-${m.id}" inputmode="decimal" value="${esc(m.commission_pct)}" style="width:80px"><button class="btn btn-ghost btn-sm" data-act="mcomm" data-id="${m.id}">Save commission %</button></div>
+        <div class="d-row"><input class="input d-input" id="mp-${m.id}" inputmode="numeric" maxlength="6" placeholder="New PIN" style="width:110px"><button class="btn btn-ghost btn-sm" data-act="mpin" data-id="${m.id}">Set PIN</button></div></div>`; }).join("") || '<div class="small">No shops yet.</div>'}</div>`;
   } else {
     const s = D.settings;
     const f = (k, l) => `<div><label class="lbl">${l}</label><input class="input d-input" id="st-${k}" value="${esc(s[k] ?? "")}"></div>`;
@@ -333,15 +434,17 @@ function vDispatch() {
 async function loadDispatch(keepFocus) {
   if (!sb || !dispatch.session) return;
   if (keepFocus && $app.contains(document.activeElement) && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
-  const [o, r, s, cs, ps] = await Promise.all([
+  const [o, r, s, cs, ps, ms, ow] = await Promise.all([
     sb.from("deli_orders").select("*").order("created_at", { ascending: false }).limit(80),
     sb.from("deli_riders").select("*").order("name"),
     sb.from("deli_settings").select("*"),
     sb.from("deli_customers").select("*").order("updated_at", { ascending: false }).limit(150),
     sb.from("deli_rider_passes").select("*").order("created_at", { ascending: false }).limit(200),
+    sb.from("deli_merchants").select("*").order("created_at", { ascending: false }),
+    sb.from("deli_orders").select("id,merchant_id,items_total,commission").eq("status", "delivered").eq("pay_status", "confirmed").eq("merchant_paid", false).not("merchant_id", "is", null),
   ]);
   if (o.error) { toast(o.error.message.includes("permission") || o.error.code === "42501" ? "This email is not on the staff list." : o.error.message); return; }
-  dispatch.orders = o.data || []; dispatch.riders = r.data || []; dispatch.customers = cs.data || []; dispatch.passes = ps.data || [];
+  dispatch.orders = o.data || []; dispatch.riders = r.data || []; dispatch.customers = cs.data || []; dispatch.passes = ps.data || []; dispatch.merchants = ms.data || []; dispatch.owed = ow.data || [];
   dispatch.settings = Object.fromEntries((s.data || []).map((x) => [x.key, x.value]));
   render(true);
 }
@@ -375,18 +478,19 @@ function vRider() {
       ${o.incident ? `<div class="note orange"><div><b>${o.incident === "danger" ? "You reported danger. Staff have been told." : "Problem reported. Staff have been told."}</b></div></div>` : ""}
       ${o.cust === "watch" ? `<div class="note orange"><div><b>Watch customer.</b> Be careful. Deliver in a public place.</div></div>` : o.cust === "new" ? `<div class="note blue"><div><b>New customer</b> (${o.cust_done || 0} orders so far). Do not go into their house.</div></div>` : ""}
       ${o.hold ? `<div class="note orange"><div><b>Do not leave yet.</b> This customer has not paid. Staff must confirm payment first.</div></div>` : ""}
+      ${o.shop ? `<div class="note blue"><div><b>Collect from ${esc(o.shop.name)}</b>${o.shop.address ? "<br>" + esc(o.shop.address) : ""}${o.shop.phone ? ` · <a href="tel:${esc(o.shop.phone)}" style="font-weight:800">Call shop</a>` : ""}<br>${esc(itemsText(o.items))}<br><b>${o.mstatus === "ready" ? "Order is READY. You can collect it." : "Shop is still preparing. Please wait."}</b></div></div>` : ""}
       <div class="t2"><b>From:</b> ${esc(o.pickup)}</div><div class="t2"><b>To:</b> ${esc(o.dropoff)}</div>
       ${o.details ? `<div class="t2"><b>Note:</b> ${esc(o.details)}${o.budget ? " · Items budget " + K(o.budget) : ""}</div>` : ""}
       ${o.item_type ? `<div class="t2">${esc(o.item_type)}${o.item_size ? " · " + esc(o.item_size) : ""}</div>` : ""}
       <div class="d-row"><span class="badge ${o.pay_status === "confirmed" ? "" : "o"}">${o.pay_method === "cash" ? "Collect cash: " + K(o.total) : PAY_NAME[o.pay_method] + (o.pay_status === "confirmed" ? " paid" : " awaiting")}</span></div>
       <div class="d-row"><a class="btn btn-ghost btn-sm" href="tel:${esc(o.customer_phone)}">Call ${esc(o.customer_name || "customer")}</a><a class="btn btn-ghost btn-sm" href="https://wa.me/${intl(o.customer_phone)}" target="_blank" rel="noopener">WhatsApp</a></div>
-      ${next && !o.hold ? `<button class="btn btn-green" data-act="rdstage" data-id="${o.id}" data-v="${next[0]}">${next[1]}</button>` : ""}
+      ${next && !o.hold && !(o.shop && o.mstatus !== "ready") ? `<button class="btn btn-green" data-act="rdstage" data-id="${o.id}" data-v="${next[0]}">${next[1]}</button>` : ""}
       ${o.status === "on_the_way" || o.status === "picked_up" ? `<div class="d-row"><input class="input d-input" id="rc-${o.id}" inputmode="numeric" maxlength="4" placeholder="Customer's 4-digit code" style="flex:1"><button class="btn btn-orange btn-sm" data-act="rdcomplete" data-id="${o.id}">Complete</button></div>` : ""}
       <div class="d-row"><input class="input d-input" id="rn-${o.id}" placeholder="What is the problem? (optional)" style="flex:1"></div>
       <div class="d-row"><button class="btn btn-ghost btn-sm" data-act="rdreport" data-id="${o.id}" data-v="problem">Problem with customer</button><button class="btn btn-sm" style="background:#B3261E;color:#fff" data-act="rdreport" data-id="${o.id}" data-v="danger">I am in danger</button></div>
     </div>`;
   };
-  const avail = (o) => `<div class="d-order"><div class="d-row" style="justify-content:space-between"><b>${SVC[o.service]} · ${K(o.total)}</b><span class="badge">${o.pay_method === "cash" ? "Cash" : PAY_NAME[o.pay_method]}</span></div>
+  const avail = (o) => `<div class="d-order"><div class="d-row" style="justify-content:space-between"><b>${o.shop_name ? esc(o.shop_name) + " · " : ""}${SVC[o.service]} · ${K(o.total)}</b><span class="badge">${o.pay_method === "cash" ? "Cash" : PAY_NAME[o.pay_method]}</span></div>
       <div class="t2"><b>From:</b> ${esc(o.pickup)}</div><div class="t2"><b>To:</b> ${esc(o.dropoff)}</div>${o.details ? `<div class="t2">${esc(o.details)}</div>` : ""}
       <button class="btn btn-green" data-act="rdaccept" data-id="${o.id}">Accept job</button></div>`;
   return `<div class="screen"><div class="hhead"><div class="brand"><div class="tile"><img src="logo.png" alt=""></div><b>Rider</b></div>
@@ -411,6 +515,83 @@ async function loadRider(keepFocus) {
   if (location.hash.startsWith("#/rider")) render(true);
 }
 
+/* ---------- merchant page ---------- */
+function vMerchant() {
+  if (!M.token) {
+    const reg = M.mode === "register";
+    return `<div class="screen"><div class="pad">${topbar(reg ? "Register your shop" : "Shop sign-in", "#/shops")}
+      <div class="note green">${ic("shop", "#1B6B35")}<div>${reg ? "Sell on Urunji Deli. We will call you to approve your shop." : "Sign in with your shop phone number and PIN."}</div></div>
+      ${reg ? '<input class="input" id="mName" placeholder="Shop name" autocomplete="organization">' : ""}
+      <input class="input" id="mPhone" inputmode="tel" placeholder="Shop phone number" autocomplete="tel">
+      ${reg ? `<select class="input" id="mCat"><option value="grocery">Groceries</option><option value="bakery">Cakes &amp; bakery</option><option value="food">Food &amp; takeaways (shawarma, chicken...)</option><option value="other">Other</option></select><input class="input" id="mAddr" placeholder="Shop address or landmark">` : ""}
+      <input class="input" id="mPin" type="password" inputmode="numeric" maxlength="6" placeholder="${reg ? "Choose a PIN (4 to 6 digits)" : "Your PIN"}">
+      <button class="btn btn-green" data-act="${reg ? "mregister" : "mlogin"}">${reg ? "Sign up" : "Sign in"}</button>
+      <button class="btn btn-ghost" data-act="mmode" data-v="${reg ? "login" : "register"}">${reg ? "I already have a shop account" : "New shop? Sign up"}</button>
+    </div></div>`;
+  }
+  const d = M.data;
+  if (!d) return `<div class="screen"><div class="center-msg"><div class="spin"></div><div>Loading…</div></div></div>`;
+  const me = d.me;
+  const mt = ["orders", "menu", "shop"].map((t) => `<button class="chip ${M.tab === t ? "on" : ""}" data-act="mtab" data-v="${t}">${{ orders: "Orders", menu: "My menu", shop: "My shop" }[t]}</button>`).join("");
+  let body = "";
+  if (M.tab === "orders") {
+    const live = d.orders.filter((o) => ["pending", "accepted", "ready"].includes(o.merchant_status) && o.status !== "cancelled" && !["picked_up", "on_the_way", "delivered"].includes(o.status));
+    const past = d.orders.filter((o) => !live.includes(o)).slice(0, 15);
+    const card = (o) => {
+      const get = Number(o.items_total) - Number(o.commission);
+      const isLive = live.includes(o);
+      return `<div class="d-order"><div class="d-row" style="justify-content:space-between"><b>Order ${esc(o.code)}</b><span class="badge ${o.merchant_status === "declined" || o.status === "cancelled" ? "g" : o.merchant_status === "pending" ? "o" : ""}">${o.status === "cancelled" ? "Cancelled" : o.status === "delivered" ? "Delivered" : o.status === "picked_up" || o.status === "on_the_way" ? "Collected" : MST[o.merchant_status] || ""}</span></div>
+        ${(o.items || []).map((i) => `<div class="rowline"><span>${i.qty} × ${esc(i.name)}</span><b>${K(i.qty * i.price)}</b></div>`).join("")}
+        ${o.details ? `<div class="t2">Note: ${esc(o.details)}</div>` : ""}
+        <div class="hr"></div><div class="rowline"><span>Items total</span><b>${K(o.items_total)}</b></div><div class="rowline"><span>Our commission</span><b>− ${K(o.commission)}</b></div><div class="total" style="font-size:16px"><span>You receive</span><span style="color:var(--green)">${K(get)}</span></div>
+        <div class="d-row"><span class="badge ${o.pay_status === "confirmed" ? "" : "o"}">${o.pay_status === "confirmed" ? "Customer has paid" : "Payment not confirmed yet"}</span>${o.rider ? `<span class="t2">Rider: ${esc(o.rider.name)}${o.rider.plate ? " · " + esc(o.rider.plate) : ""}</span>` : ""}</div>
+        ${isLive && o.merchant_status === "pending" ? `<div class="d-row"><button class="btn btn-green btn-sm" data-act="mact" data-id="${o.id}" data-v="accept">Accept order</button><button class="btn btn-ghost btn-sm" style="color:#B3261E;border-color:#B3261E" data-act="mact" data-id="${o.id}" data-v="decline">Decline</button></div>${o.needs_payment ? '<div class="small">You can accept once we confirm the customer has paid.</div>' : ""}` : ""}
+        ${isLive && o.merchant_status === "accepted" ? `<div class="d-row"><button class="btn btn-orange btn-sm" data-act="mact" data-id="${o.id}" data-v="ready">Order is ready</button><button class="btn btn-ghost btn-sm" style="color:#B3261E;border-color:#B3261E" data-act="mact" data-id="${o.id}" data-v="decline">Cancel order</button></div>` : ""}
+        ${isLive && o.merchant_status === "ready" ? `<div class="small"><b>Ready.</b> A rider will come to collect it.</div>` : ""}
+      </div>`;
+    };
+    body = `<div class="sec">New and active (${live.length})</div>${live.map(card).join("") || '<div class="small">No orders right now. This page updates by itself.</div>'}
+      <div class="sec" style="margin-top:6px">Earlier</div>${past.map(card).join("") || '<div class="small">Nothing yet.</div>'}`;
+  } else if (M.tab === "menu") {
+    body = `<div class="d-order"><div class="sec">Add an item</div>
+        <input class="input d-input" id="niN" placeholder="Item name e.g. Chocolate cake">
+        <input class="input d-input" id="niP" inputmode="decimal" placeholder="Price in Kwacha e.g. 150">
+        <input class="input d-input" id="niD" placeholder="Short description (optional)">
+        <button class="btn btn-green btn-sm" data-act="mitemadd">Add to menu</button></div>
+      ${d.items.map((i) => `<div class="d-order"><div class="d-row"><input class="input d-input" id="in-${i.id}" value="${esc(i.name)}" style="flex:2;min-width:140px"><input class="input d-input" id="ip-${i.id}" inputmode="decimal" value="${esc(i.price)}" style="flex:1;min-width:80px"></div>
+        <input class="input d-input" id="id-${i.id}" value="${esc(i.description || "")}" placeholder="Description (optional)">
+        <div class="d-row"><button class="btn btn-green btn-sm" data-act="mitemsave" data-id="${i.id}">Save</button><button class="btn btn-ghost btn-sm" data-act="mitemtoggle" data-id="${i.id}">${i.available ? "Mark sold out" : "Back in stock"}</button><button class="btn btn-ghost btn-sm" style="color:#B3261E;border-color:#B3261E" data-act="mitemdel" data-id="${i.id}">Delete</button><span class="badge ${i.available ? "" : "g"}">${i.available ? "On sale" : "Sold out"}</span></div></div>`).join("") || '<div class="small">Your menu is empty. Add your first item above.</div>'}`;
+  } else {
+    body = `<div class="d-order"><div class="sec">About your shop</div><label class="lbl">Address or landmark</label><input class="input d-input" id="msAddr" value="${esc(me.address || "")}"><label class="lbl">Short description</label><textarea class="input" id="msDesc" rows="3" placeholder="e.g. Fresh bread, cakes and cupcakes made daily">${esc(me.description || "")}</textarea>
+      <button class="btn btn-green btn-sm" data-act="mshopsave">Save</button></div>
+      <div class="small">Our commission on items is ${esc(me.commission_pct)}%. We pay you the rest after each delivered order. Call us on ${esc(CFG.SUPPORT_PHONE)} to change your shop name, phone or photo.</div>
+      <button class="btn btn-ghost" data-act="mlogout">Sign out</button>`;
+  }
+  return `<div class="screen"><div class="hhead"><div class="brand"><div class="tile"><img src="logo.png" alt=""></div><b>Shop</b></div>
+      <div><div style="font-size:24px;font-weight:800">${esc(me.name)}</div><div style="opacity:.9;font-size:14px">${me.is_open ? "Open for orders" : "Closed. Customers cannot order."}</div></div></div>
+    <div class="pad" style="padding-top:18px">
+      <button class="btn ${me.is_open ? "btn-orange" : "btn-green"}" data-act="mopen" data-v="${me.is_open ? 0 : 1}">${me.is_open ? "You are OPEN. Tap to close shop" : "Shop is CLOSED. Tap to open"}</button>
+      <div class="chips">${mt}</div>${body}
+    </div></div>`;
+}
+async function loadMerchant(keepFocus) {
+  if (!M.token) return;
+  if (keepFocus && $app.contains(document.activeElement) && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
+  try {
+    const d = await rpc("deli_merchant_data", { p_token: M.token });
+    if (d && d.error) { M.token = null; M.data = null; store.set("mtoken", null); toast("Please sign in again"); } else M.data = d;
+  } catch (e) { toast(e.message); }
+  if (location.hash.startsWith("#/merchant")) render(true);
+}
+async function loadShops() {
+  try { shopsData = (await rpc("deli_shops")) || []; } catch { shopsData = []; }
+  if (/^#\/(home|shops)$/.test(location.hash)) render(true);
+}
+async function loadMenu(id) {
+  try { menuCache[id] = (await rpc("deli_shop_menu", { p_id: id })) || null; } catch { menuCache[id] = null; }
+  if (location.hash === "#/shop/" + id) render(true);
+}
+
 /* ---------- router ---------- */
 function stopTimer() { clearInterval(timer); timer = null; }
 
@@ -421,7 +602,14 @@ async function render(soft) {
   let html;
   switch (route) {
     case "": case "welcome": html = vWelcome(); if (!soft && store.get("seen", false)) timer = setTimeout(() => { if (/^#?\/?(welcome)?$/.test(location.hash)) location.hash = "#/home"; }, 2000); break;
-    case "home": html = vHome(); break;
+    case "home": html = vHome(); if (!soft && shopsData === null) loadShops(); break;
+    case "shops": html = vShops(); if (!soft) loadShops(); break;
+    case "shop": html = vShop(arg); if (!soft) loadMenu(arg); break;
+    case "basket": html = vBasket(); if (!soft) checkCust(); break;
+    case "merchant":
+      html = vMerchant();
+      if (!soft && M.token) { loadMerchant(); timer = setInterval(() => loadMerchant(true), 8000); }
+      break;
     case "delivery": case "errand": case "ride":
       if (draft.service !== route) { draft = Object.assign(blankDraft(), { service: route, pay_method: draft.pay_method || "mtn" }); saveDraft(); }
       html = vBook(route); break;
@@ -474,6 +662,7 @@ async function renderOrders(soft) {
 $app.addEventListener("input", (e) => {
   const t = e.target;
   if (t.dataset.bind) { draft[t.dataset.bind] = t.value; saveDraft(); }
+  if (t.dataset.bindCart) { cart[t.dataset.bindCart] = t.value; saveCart(); }
   if (t.dataset.bindAcc) { account[t.dataset.bindAcc] = t.value; store.set("account", account); }
 });
 
@@ -519,6 +708,73 @@ $app.addEventListener("click", async (e) => {
   }
   else if (a === "rate") {
     try { await rpc("deli_rate", { p_stars: Number(v), p_code: el.dataset.code }); toast("Thanks for rating!"); lastSig = ""; render(true); } catch (err) { toast(err.message); }
+  }
+  /* shops */
+  else if (a === "shopcat") { shopFilter = v; render(true); }
+  else if (a === "cartadd" || a === "cartsub") {
+    const mid = el.dataset.mid; const m = menuCache[mid]; if (!m) return;
+    if (cart.mid !== mid) { cart = Object.assign(cart, { mid, name: m.shop.name, lines: {} }); }
+    const it = m.items.find((x) => x.id === id); if (!it) return;
+    const cur = cart.lines[id] ? cart.lines[id].qty : 0;
+    const q = Math.max(0, Math.min(20, cur + (a === "cartadd" ? 1 : -1)));
+    if (q === 0) delete cart.lines[id]; else cart.lines[id] = { name: it.name, price: Number(it.price), qty: q };
+    if (!Object.keys(cart.lines).length) cart.mid = null;
+    saveCart(); render(true);
+  }
+  else if (a === "shoppm") { cart.pay = v; saveCart(); render(true); }
+  else if (a === "placeshop") {
+    if (cust.blocked) return toast("Sorry, we cannot take this order right now. Please call us.");
+    if (cart.dropoff.trim().length < 2) return toast("Please say where to deliver");
+    if (account.name.trim().length < 2) return toast("Please enter your name");
+    if (String(account.phone).replace(/\D/g, "").length < 9) return toast("Please enter a valid phone number");
+    const total = cartTotal() + (fees.delivery || 0) + (fees.service || 0);
+    el.disabled = true; el.textContent = "Placing order…";
+    try {
+      const r = await rpc("deli_create_merchant_order", { p_merchant: cart.mid, p_items: Object.entries(cart.lines).map(([i, l]) => ({ id: i, qty: l.qty })), p_name: account.name, p_phone: account.phone, p_dropoff: cart.dropoff, p_details: cart.details || null, p_pay_method: cart.pay });
+      addOrder(r.code, "delivery");
+      cart = { mid: null, name: "", lines: {}, dropoff: cart.dropoff, details: "", pay: cart.pay }; saveCart();
+      location.hash = "#/track/" + r.code;
+    } catch (err) { toast(err.message); el.disabled = false; el.textContent = "Place order · " + K(total); }
+  }
+  /* merchant */
+  else if (a === "mmode") { M.mode = v; render(true); }
+  else if (a === "mlogin") {
+    try {
+      const r = await rpc("deli_merchant_login", { p_phone: document.getElementById("mPhone").value, p_pin: document.getElementById("mPin").value });
+      if (r.error) return toast(r.error);
+      M.token = r.token; store.set("mtoken", r.token); M.data = null; M.tab = "orders"; render();
+    } catch (err) { toast(err.message); }
+  }
+  else if (a === "mregister") {
+    try {
+      await rpc("deli_merchant_register", { p_name: document.getElementById("mName").value, p_phone: document.getElementById("mPhone").value, p_category: document.getElementById("mCat").value, p_address: document.getElementById("mAddr").value, p_pin: document.getElementById("mPin").value });
+      M.mode = "login"; render(true); toast("Thanks! We will call you once your shop is approved.");
+    } catch (err) { toast(err.message); }
+  }
+  else if (a === "mlogout") { M.token = null; M.data = null; store.set("mtoken", null); render(); }
+  else if (a === "mtab") { M.tab = v; render(true); }
+  else if (a === "mopen") { try { await rpc("deli_merchant_set_open", { p_token: M.token, p_open: v === "1" }); toast(v === "1" ? "Shop is open" : "Shop is closed"); loadMerchant(); } catch (err) { toast(err.message); } }
+  else if (a === "mact") {
+    if (v === "decline" && !twice("md" + id, "Tap again to decline this order")) return;
+    try { const ok = await rpc("deli_merchant_order_action", { p_token: M.token, p_id: id, p_action: v }); toast(ok ? (v === "accept" ? "Order accepted" : v === "ready" ? "Marked ready" : "Order declined") : "Sorry, that did not work"); loadMerchant(); } catch (err) { toast(err.message); loadMerchant(); }
+  }
+  else if (a === "mitemadd") {
+    const name = document.getElementById("niN").value.trim(), price = Number(document.getElementById("niP").value);
+    if (name.length < 2) return toast("Enter the item name"); if (!(price >= 0) || document.getElementById("niP").value.trim() === "") return toast("Enter the price");
+    try { await rpc("deli_merchant_item_save", { p_token: M.token, p_id: null, p_name: name, p_description: document.getElementById("niD").value.trim() || null, p_price: price, p_available: true }); toast("Added"); loadMerchant(); } catch (err) { toast(err.message); }
+  }
+  else if (a === "mitemsave" || a === "mitemtoggle") {
+    const it = M.data.items.find((x) => x.id === id); if (!it) return;
+    const name = document.getElementById("in-" + id).value.trim(), price = Number(document.getElementById("ip-" + id).value);
+    if (name.length < 2 || !(price >= 0)) return toast("Check the name and price");
+    try { await rpc("deli_merchant_item_save", { p_token: M.token, p_id: id, p_name: name, p_description: document.getElementById("id-" + id).value.trim() || null, p_price: price, p_available: a === "mitemtoggle" ? !it.available : it.available }); toast("Saved"); loadMerchant(); } catch (err) { toast(err.message); }
+  }
+  else if (a === "mitemdel") {
+    if (!twice("mi" + id, "Tap Delete again to remove this item")) return;
+    try { await rpc("deli_merchant_item_delete", { p_token: M.token, p_id: id }); toast("Deleted"); loadMerchant(); } catch (err) { toast(err.message); }
+  }
+  else if (a === "mshopsave") {
+    try { await rpc("deli_merchant_profile", { p_token: M.token, p_description: document.getElementById("msDesc").value, p_address: document.getElementById("msAddr").value }); toast("Saved"); loadMerchant(); } catch (err) { toast(err.message); }
   }
   /* rider */
   else if (a === "rdmode") { R.mode = v; render(true); }
@@ -603,8 +859,36 @@ $app.addEventListener("click", async (e) => {
   }
   else if (a === "rapprove") { await sb.from("deli_riders").update({ approved: true, active: true }).eq("id", id); toast("Rider approved"); loadDispatch(); }
   else if (a === "rsetpin") {
-    const pin = prompt("New PIN for this rider (4 to 6 digits)"); if (!pin) return;
-    try { await rpc("deli_staff_set_pin", { p_rider: id, p_pin: pin.trim() }); toast("PIN saved"); } catch (err) { toast(err.message); }
+    const pin = (document.getElementById("rp-" + id).value || "").trim();
+    if (!/^[0-9]{4,6}$/.test(pin)) return toast("Type a PIN of 4 to 6 digits first");
+    try { await rpc("deli_staff_set_pin", { p_rider: id, p_pin: pin }); document.getElementById("rp-" + id).value = ""; toast("PIN saved"); } catch (err) { toast(err.message); }
+  }
+  else if (a === "addshop") {
+    const name = document.getElementById("nmN").value.trim(); if (name.length < 2) return toast("Enter the shop name");
+    const pin = document.getElementById("nmI").value.trim(); if (pin && !/^[0-9]{4,6}$/.test(pin)) return toast("PIN must be 4 to 6 digits");
+    const pct = Number(document.getElementById("nmM").value); if (!(pct >= 0 && pct <= 50)) return toast("Commission must be 0 to 50");
+    const { data: nm, error } = await sb.from("deli_merchants").insert({ name, phone: document.getElementById("nmP").value.trim(), category: document.getElementById("nmC").value, address: document.getElementById("nmA").value.trim(), commission_pct: pct, featured: document.getElementById("nmF").checked, approved: true }).select().single();
+    if (error) return toast(error.message);
+    if (pin) { try { await rpc("deli_staff_set_merchant_pin", { p_merchant: nm.id, p_pin: pin }); } catch (err) { toast(err.message); } }
+    toast(pin ? "Shop added" : "Shop added. Set a PIN so the owner can sign in."); loadDispatch();
+  }
+  else if (a === "mapprove") { await sb.from("deli_merchants").update({ approved: true, active: true }).eq("id", id); toast("Shop approved"); loadDispatch(); }
+  else if (a === "mfeat") { await sb.from("deli_merchants").update({ featured: v === "1" }).eq("id", id); loadDispatch(); }
+  else if (a === "mactive") { await sb.from("deli_merchants").update({ active: v === "1" }).eq("id", id); loadDispatch(); }
+  else if (a === "mcomm") {
+    const pct = Number(document.getElementById("mc-" + id).value); if (!(pct >= 0 && pct <= 50)) return toast("Commission must be 0 to 50");
+    const { error } = await sb.from("deli_merchants").update({ commission_pct: pct }).eq("id", id); error ? toast(error.message) : (toast("Saved. Applies to new orders."), loadDispatch());
+  }
+  else if (a === "mpin") {
+    const pin = (document.getElementById("mp-" + id).value || "").trim();
+    if (!/^[0-9]{4,6}$/.test(pin)) return toast("Type a PIN of 4 to 6 digits first");
+    try { await rpc("deli_staff_set_merchant_pin", { p_merchant: id, p_pin: pin }); document.getElementById("mp-" + id).value = ""; toast("PIN saved"); } catch (err) { toast(err.message); }
+  }
+  else if (a === "mpaid") {
+    if (!twice("mpd" + id, "Tap again once you have paid the shop")) return;
+    const ids = dispatch.owed.filter((x) => x.merchant_id === id).map((x) => x.id);
+    const { error } = await sb.from("deli_orders").update({ merchant_paid: true }).in("id", ids);
+    error ? toast(error.message) : (toast("Marked as paid out"), loadDispatch());
   }
   else if (a === "rtrust") { await sb.from("deli_riders").update({ trusted: v === "1" }).eq("id", id); loadDispatch(); }
   else if (a === "ractive") { await sb.from("deli_riders").update({ active: v === "1" }).eq("id", id); loadDispatch(); }
