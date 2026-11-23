@@ -416,6 +416,8 @@ function vDispatch() {
         <label class="d-row small"><input type="checkbox" id="nmF"> Featured (shown first)</label><button class="btn btn-green btn-sm" data-act="addshop">Add shop</button></div>
       <div class="d-grid" style="margin-top:12px">${D.merchants.map((m) => { const ow = owedBy[m.id]; return `<div class="d-order"><div class="d-row" style="justify-content:space-between"><b>${esc(m.name)} ${m.featured ? "★" : ""}</b><span class="badge ${m.approved === false ? "o" : m.active ? "" : "g"}">${m.approved === false ? "Waiting for approval" : m.active ? (m.is_open ? "Open" : "Closed") : "Off"}</span></div>
         <div class="t2">${esc((CAT[m.category] || CAT.other).name)} · <a href="tel:${esc(m.phone || "")}" style="color:var(--green);font-weight:700">${esc(m.phone || "")}</a> · ${esc(m.address || "")}</div>
+        <div class="d-row"><div class="stile" style="width:64px;height:64px;background:${(CAT[m.category] || CAT.other).bg};color:${(CAT[m.category] || CAT.other).fg}">${safeImg(m.image_url) ? `<img src="${esc(safeImg(m.image_url))}" alt="">` : ic((CAT[m.category] || CAT.other).icon, (CAT[m.category] || CAT.other).fg, 28)}</div>
+          <label class="btn btn-ghost btn-sm" style="cursor:pointer">${safeImg(m.image_url) ? "Change photo" : "Add photo"}<input type="file" accept="image/*" data-file="mimg" data-id="${m.id}" hidden></label>${safeImg(m.image_url) ? `<button class="btn btn-ghost btn-sm" style="color:#B3261E;border-color:#B3261E" data-act="mimgdel" data-id="${m.id}">Remove photo</button>` : ""}</div>
         <div class="d-row"><span class="badge ${ow ? "o" : ""}">${ow ? "Owed to shop: " + K(ow.amt) + " (" + ow.n + " order" + (ow.n > 1 ? "s" : "") + ")" : "Nothing owed"}</span>${ow ? `<button class="btn btn-orange btn-sm" data-act="mpaid" data-id="${m.id}">Mark paid out</button>` : ""}</div>
         <div class="d-row">${m.approved === false ? `<button class="btn btn-green btn-sm" data-act="mapprove" data-id="${m.id}">Approve</button>` : ""}<button class="btn btn-ghost btn-sm" data-act="mfeat" data-id="${m.id}" data-v="${m.featured ? 0 : 1}">${m.featured ? "Unfeature" : "Feature"}</button><button class="btn btn-ghost btn-sm" data-act="mactive" data-id="${m.id}" data-v="${m.active ? 0 : 1}">${m.active ? "Switch off" : "Switch on"}</button></div>
         <div class="d-row"><input class="input d-input" id="mc-${m.id}" inputmode="decimal" value="${esc(m.commission_pct)}" style="width:80px"><button class="btn btn-ghost btn-sm" data-act="mcomm" data-id="${m.id}">Save commission %</button></div>
@@ -666,7 +668,34 @@ $app.addEventListener("input", (e) => {
   if (t.dataset.bindAcc) { account[t.dataset.bindAcc] = t.value; store.set("account", account); }
 });
 
-$app.addEventListener("change", (e) => { if (e.target.dataset && e.target.dataset.bindAcc === "phone") checkCust(); });
+const shrink = (file, max = 700) => new Promise((ok, no) => {
+  const url = URL.createObjectURL(file), im = new Image();
+  im.onload = () => {
+    const k = Math.min(1, max / Math.max(im.width, im.height)), c = document.createElement("canvas");
+    c.width = Math.round(im.width * k); c.height = Math.round(im.height * k);
+    c.getContext("2d").drawImage(im, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
+    c.toBlob((b) => (b ? ok(b) : no(new Error("Could not read this picture"))), "image/jpeg", 0.82);
+  };
+  im.onerror = () => { URL.revokeObjectURL(url); no(new Error("Could not read this picture. Try a JPG or PNG.")); };
+  im.src = url;
+});
+$app.addEventListener("change", async (e) => {
+  const t = e.target;
+  if (t.dataset && t.dataset.bindAcc === "phone") checkCust();
+  if (t.dataset && t.dataset.file === "mimg" && t.files && t.files[0]) {
+    const id = t.dataset.id; toast("Uploading photo…");
+    try {
+      const blob = await shrink(t.files[0]);
+      const path = id + "-" + Date.now() + ".jpg";
+      const up = await sb.storage.from("deli-shops").upload(path, blob, { contentType: "image/jpeg", upsert: true });
+      if (up.error) throw up.error;
+      const url = sb.storage.from("deli-shops").getPublicUrl(path).data.publicUrl;
+      const { error } = await sb.from("deli_merchants").update({ image_url: url }).eq("id", id);
+      if (error) throw error;
+      toast("Photo saved"); loadDispatch(); shopsData = null;
+    } catch (err) { toast(err.message || "Upload failed"); }
+  }
+});
 
 $app.addEventListener("click", async (e) => {
   const el = e.target.closest("[data-act]");
@@ -873,6 +902,11 @@ $app.addEventListener("click", async (e) => {
     toast(pin ? "Shop added" : "Shop added. Set a PIN so the owner can sign in."); loadDispatch();
   }
   else if (a === "mapprove") { await sb.from("deli_merchants").update({ approved: true, active: true }).eq("id", id); toast("Shop approved"); loadDispatch(); }
+  else if (a === "mimgdel") {
+    if (!twice("mid" + id, "Tap again to remove the photo")) return;
+    const { error } = await sb.from("deli_merchants").update({ image_url: null }).eq("id", id);
+    error ? toast(error.message) : (toast("Photo removed"), loadDispatch(), shopsData = null);
+  }
   else if (a === "mfeat") { await sb.from("deli_merchants").update({ featured: v === "1" }).eq("id", id); loadDispatch(); }
   else if (a === "mactive") { await sb.from("deli_merchants").update({ active: v === "1" }).eq("id", id); loadDispatch(); }
   else if (a === "mcomm") {
