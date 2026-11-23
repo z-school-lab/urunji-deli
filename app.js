@@ -55,6 +55,8 @@ let R = { token: store.get("rtoken", null), data: null, mode: "login" };
 const saveDraft = () => store.set("draft", draft);
 const myOrders = () => store.get("orders", []);
 const addOrder = (code, service) => store.set("orders", [{ code, service, at: Date.now() }, ...myOrders().filter((o) => o.code !== code)].slice(0, 30));
+let armedKey = null, armedAt = 0;
+const twice = (key, msg) => { if (armedKey === key && Date.now() - armedAt < 6000) { armedKey = null; return true; } armedKey = key; armedAt = Date.now(); toast(msg || "Tap the button again to confirm"); return false; };
 const rpc = async (fn, args) => {
   if (!sb) throw new Error("The app is not connected yet. Please try again later.");
   const { data, error } = await sb.rpc(fn, args || {});
@@ -463,7 +465,7 @@ $app.addEventListener("click", async (e) => {
   else if (a === "saveacc") { store.set("account", account); toast("Saved"); }
   else if (a === "findcode") { const c = document.getElementById("codeIn").value.trim().toUpperCase(); if (c) { addOrder(c, "delivery"); location.hash = "#/track/" + c; } }
   else if (a === "received") {
-    if (!confirm(el.textContent.trim() + "?")) return;
+    if (!twice("r" + el.dataset.code, "Tap the button again to confirm")) return;
     try { await rpc("deli_confirm_received", { p_code: el.dataset.code }); toast("Thank you!"); location.hash = "#/delivered/" + el.dataset.code; } catch (err) { toast(err.message); }
   }
   else if (a === "rate") {
@@ -509,8 +511,8 @@ $app.addEventListener("click", async (e) => {
     error ? toast(error.message) : (toast("Rider assigned"), loadDispatch());
   }
   else if (a === "status") {
-    if (v === "cancelled" && !confirm("Cancel this order?")) return;
-    if (v === "delivered" && !confirm("Mark this order as completed?")) return;
+    if (v === "cancelled" && !twice("c" + id, "Tap Cancel again to cancel this order")) return;
+    if (v === "delivered" && !twice("d" + id, "Tap Complete order again to confirm")) return;
     const { error } = await sb.from("deli_orders").update({ status: v }).eq("id", id);
     error ? toast(error.message) : loadDispatch();
   }
