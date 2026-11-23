@@ -49,9 +49,10 @@ let draft = Object.assign(blankDraft(), store.get("draft", {}));
 let account = store.get("account", { name: "", phone: "" });
 let timer = null;
 let lastSig = "";
-let dispatch = { session: null, tab: "orders", orders: [], riders: [], customers: [], settings: {}, loading: false };
+let dispatch = { session: null, tab: "orders", orders: [], riders: [], customers: [], passes: [], settings: {}, loading: false };
 let R = { token: store.get("rtoken", null), data: null, mode: "login" };
 
+const todayLusaka = () => new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Lusaka" });
 let cust = { key: "", blocked: false, limit: 150 };
 const pkey = (p) => String(p || "").replace(/\D/g, "").slice(-9);
 async function checkCust() {
@@ -154,7 +155,7 @@ function vBook(svc) {
       <div class="field last"><label>${pl[1]}</label><input class="bare" data-bind="dropoff" value="${esc(d.dropoff)}" placeholder="Type a place or landmark"></div></div></div></div>
     ${extra}
     <div class="spacer"></div>
-    <div class="card"><div class="rowline"><span>${SVC[svc]} fee</span><b>${K(fees[svc])}</b></div><div class="rowline"><span>Service fee</span><b>${K(fees.service)}</b></div><div class="hr"></div><div class="total"><span>Total</span><span>${K(money(svc))}</span></div></div>
+    <div class="card"><div class="rowline"><span>${SVC[svc]} fee</span><b>${K(fees[svc])}</b></div>${fees.service > 0 ? `<div class="rowline"><span>Service fee</span><b>${K(fees.service)}</b></div>` : ""}<div class="hr"></div><div class="total"><span>Total</span><span>${K(money(svc))}</span></div></div>
     <button class="btn btn-green" data-act="topay" data-svc="${svc}">Continue to pay</button>
   </div></div>`;
 }
@@ -169,7 +170,7 @@ function vPay() {
   return `<div class="screen"><div class="pad">
     ${topbar("Pay", "#/" + svc)}
     ${cust.blocked ? `<div class="note orange"><div><b>Sorry, we cannot take orders from this number right now.</b> Please call us on ${esc(CFG.SUPPORT_PHONE)}.</div></div>` : ""}
-    <div class="card"><div class="rowline"><span>${SVC[svc]}</span><b>${K(fees[svc])}</b></div><div class="rowline"><span>Service fee</span><b>${K(fees.service)}</b></div><div class="hr"></div><div class="total"><span>Total</span><span>${K(money(svc))}</span></div></div>
+    <div class="card"><div class="rowline"><span>${SVC[svc]}</span><b>${K(fees[svc])}</b></div>${fees.service > 0 ? `<div class="rowline"><span>Service fee</span><b>${K(fees.service)}</b></div>` : ""}<div class="hr"></div><div class="total"><span>Total</span><span>${K(money(svc))}</span></div></div>
     <div class="sec">Your details</div>
     <input class="input" data-bind-acc="name" placeholder="Your name" value="${esc(acc.name)}" autocomplete="name">
     <input class="input" data-bind-acc="phone" inputmode="tel" placeholder="Phone number e.g. 0977123456" value="${esc(acc.phone)}" autocomplete="tel">
@@ -300,8 +301,10 @@ function vDispatch() {
         ` : ""}
       </div>`;
     };
+    const awaitingPasses = D.passes.filter((p) => p.status === "awaiting");
+    const passAlert = awaitingPasses.length ? `<div class="note orange"><div><b>${awaitingPasses.length} day pass payment${awaitingPasses.length > 1 ? "s" : ""} waiting:</b>${awaitingPasses.map((p) => { const rd = D.riders.find((x) => x.id === p.rider_id); return `<div class="d-row" style="margin-top:6px"><span>${esc(rd ? rd.name : "Rider")} · ${K(p.amount)} · ${PAY_NAME[p.method] || p.method} · ref <b>${esc(p.ref)}</b></span><button class="btn btn-green btn-sm" data-act="passok" data-id="${p.id}">Confirm paid</button></div>`; }).join("")}</div></div>` : "";
     const alerts = D.orders.filter((o) => o.incident_level === "danger" && ![ "delivered", "cancelled" ].includes(o.status));
-    body = `${alerts.length ? `<div class="note orange" style="border:2px solid #B3261E"><div><b style="color:#B3261E">ALERT: ${alerts.length} rider${alerts.length > 1 ? "s" : ""} in danger.</b> Order ${alerts.map((o) => esc(o.code)).join(", ")}. Call them now.</div></div>` : ""}<div class="sec">Active (${active.length})</div><div class="d-grid">${active.map(card).join("") || '<div class="small">No active orders.</div>'}</div>
+    body = `${passAlert}${alerts.length ? `<div class="note orange" style="border:2px solid #B3261E"><div><b style="color:#B3261E">ALERT: ${alerts.length} rider${alerts.length > 1 ? "s" : ""} in danger.</b> Order ${alerts.map((o) => esc(o.code)).join(", ")}. Call them now.</div></div>` : ""}<div class="sec">Active (${active.length})</div><div class="d-grid">${active.map(card).join("") || '<div class="small">No active orders.</div>'}</div>
       <div class="sec" style="margin-top:10px">Recent</div><div class="d-grid">${done.map(card).join("") || '<div class="small">Nothing yet.</div>'}</div>`;
   } else if (D.tab === "customers") {
     const lab = (c) => c.status === "new" ? (c.completed >= 3 ? "Regular" : "New") : c.status[0].toUpperCase() + c.status.slice(1);
@@ -314,11 +317,12 @@ function vDispatch() {
     body = `<div class="d-order"><div class="sec">Add a rider</div><div class="d-row"><input class="input d-input" id="rN" placeholder="Name" style="flex:1;min-width:130px"><input class="input d-input" id="rP" placeholder="Phone" style="flex:1;min-width:130px"><input class="input d-input" id="rL" placeholder="Plate / bike" style="flex:1;min-width:110px"><input class="input d-input" id="rI" inputmode="numeric" maxlength="6" placeholder="Login PIN (4-6 digits)" style="flex:1;min-width:140px"></div>
       <label class="d-row small"><input type="checkbox" id="rT"> Trusted rider (can take errands and rides)</label><button class="btn btn-green btn-sm" data-act="addrider">Add rider</button></div>
       <div class="d-grid" style="margin-top:12px">${D.riders.map((r) => `<div class="d-order"><div class="d-row" style="justify-content:space-between"><b>${esc(r.name)} ${r.trusted ? "★" : ""}</b><span class="badge ${r.approved === false ? "o" : r.active ? "" : "g"}">${r.approved === false ? "Waiting for approval" : r.active ? (r.online ? "Online" : "Active") : "Off"}</span></div><div class="t2">${esc(r.phone || "")} · ${esc(r.plate || "")}</div>
+        ${(() => { const tp = D.passes.find((p) => p.rider_id === r.id && p.pass_date === todayLusaka()); const lp = D.passes.find((p) => p.rider_id === r.id && p.status === "confirmed"); return `<div class="d-row"><span class="badge ${tp && tp.status === "confirmed" ? "" : "o"}">${tp ? (tp.status === "confirmed" ? "Pass paid today" : "Pass waiting: ref " + esc(tp.ref)) : "No pass today"}</span>${tp && tp.status === "awaiting" ? `<button class="btn btn-green btn-sm" data-act="passok" data-id="${tp.id}">Confirm paid</button>` : !tp ? `<button class="btn btn-ghost btn-sm" data-act="passgive" data-id="${r.id}">Record pass paid</button>` : ""}${!tp && lp ? `<span class="t2">Last: ${esc(lp.pass_date)}</span>` : ""}</div>`; })()}
         <div class="d-row">${r.approved === false ? `<button class="btn btn-green btn-sm" data-act="rapprove" data-id="${r.id}">Approve</button>` : ""}<button class="btn btn-ghost btn-sm" data-act="rsetpin" data-id="${r.id}">Set PIN</button><button class="btn btn-ghost btn-sm" data-act="rtrust" data-id="${r.id}" data-v="${r.trusted ? 0 : 1}">${r.trusted ? "Remove trusted" : "Make trusted"}</button><button class="btn btn-ghost btn-sm" data-act="ractive" data-id="${r.id}" data-v="${r.active ? 0 : 1}">${r.active ? "Switch off" : "Switch on"}</button></div></div>`).join("")}</div>`;
   } else {
     const s = D.settings;
     const f = (k, l) => `<div><label class="lbl">${l}</label><input class="input d-input" id="st-${k}" value="${esc(s[k] ?? "")}"></div>`;
-    body = `<div class="d-order"><div class="sec">Prices (Kwacha)</div>${f("fee_delivery", "Delivery fee")}${f("fee_errand", "Errand fee")}${f("fee_ride", "Ride fare")}${f("fee_service", "Service fee")}${f("cash_limit_new", "Cash limit for new customers (K)")}
+    body = `<div class="d-order"><div class="sec">Prices (Kwacha)</div>${f("fee_delivery", "Delivery fee")}${f("fee_errand", "Errand fee")}${f("fee_ride", "Ride fare")}${f("fee_service", "Service fee")}${f("cash_limit_new", "Cash limit for new customers (K)")}${f("day_pass", "Rider day pass (K)")}
       <div class="sec" style="margin-top:8px">Where customers send money</div>${f("pay_to_mtn", "MTN MoMo number")}${f("pay_to_airtel", "Airtel Money number")}${f("pay_to_zamtel", "Zamtel Kwacha number")}
       <button class="btn btn-green" data-act="savesettings">Save settings</button></div>`;
   }
@@ -329,14 +333,15 @@ function vDispatch() {
 async function loadDispatch(keepFocus) {
   if (!sb || !dispatch.session) return;
   if (keepFocus && $app.contains(document.activeElement) && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
-  const [o, r, s, cs] = await Promise.all([
+  const [o, r, s, cs, ps] = await Promise.all([
     sb.from("deli_orders").select("*").order("created_at", { ascending: false }).limit(80),
     sb.from("deli_riders").select("*").order("name"),
     sb.from("deli_settings").select("*"),
     sb.from("deli_customers").select("*").order("updated_at", { ascending: false }).limit(150),
+    sb.from("deli_rider_passes").select("*").order("created_at", { ascending: false }).limit(200),
   ]);
   if (o.error) { toast(o.error.message.includes("permission") || o.error.code === "42501" ? "This email is not on the staff list." : o.error.message); return; }
-  dispatch.orders = o.data || []; dispatch.riders = r.data || []; dispatch.customers = cs.data || [];
+  dispatch.orders = o.data || []; dispatch.riders = r.data || []; dispatch.customers = cs.data || []; dispatch.passes = ps.data || [];
   dispatch.settings = Object.fromEntries((s.data || []).map((x) => [x.key, x.value]));
   render(true);
 }
@@ -358,6 +363,12 @@ function vRider() {
   const d = R.data;
   if (!d) return `<div class="screen"><div class="center-msg"><div class="spin"></div><div>Loading…</div></div></div>`;
   const me = d.me;
+  const ps = d.pass || { status: "paid" };
+  const pnum = ps.pay && ps.method ? ps.pay[ps.method] : "";
+  const passBox = ps.status === "paid" ? `<div class="note green">${ic("check", "#1B6B35")}<div><b>Day pass paid.</b> You can work today.</div></div>`
+    : ps.status === "awaiting" ? `<div class="note orange"><div><b>Waiting for staff to confirm your ${K(ps.price)} day pass.</b><br>${ps.method === "cash" ? "Give " + K(ps.amount || ps.price) + " in cash to staff." : "Send " + K(ps.amount || ps.price) + " by " + PAY_NAME[ps.method] + " to <b>" + esc(pnum || "the number staff will give you") + "</b>."} Reference: <b>${esc(ps.ref)}</b>.<br>This page updates by itself once staff confirm.</div></div>`
+    : `<div class="note orange"><div><b>Pay your ${K(ps.price)} day pass to start work.</b> Choose how you will pay:</div></div>
+      <div class="chips">${["mtn", "airtel", "zamtel", "cash"].map((m) => `<button class="chip" data-act="rdpass" data-v="${m}">${m === "cash" ? "Cash to staff" : PAY_NAME[m]}</button>`).join("")}</div>`;
   const job = (o) => {
     const next = o.status === "accepted" ? ["picked_up", "Picked up"] : o.status === "picked_up" ? ["on_the_way", "On the way"] : null;
     return `<div class="d-order"><div class="d-row" style="justify-content:space-between"><b>${SVC[o.service]} · ${esc(o.code)}</b><span class="badge o">${STATUS_TXT[o.status]}</span></div>
@@ -381,7 +392,8 @@ function vRider() {
   return `<div class="screen"><div class="hhead"><div class="brand"><div class="tile"><img src="logo.png" alt=""></div><b>Rider</b></div>
       <div><div style="font-size:24px;font-weight:800">Hi, ${esc(me.name.split(" ")[0])}</div><div style="opacity:.9;font-size:14px">Delivered today: ${d.done_today}${me.trusted ? " · Trusted rider" : ""}</div></div></div>
     <div class="pad" style="padding-top:18px">
-      <button class="btn ${me.online ? "btn-orange" : "btn-green"}" data-act="rdonline" data-v="${me.online ? 0 : 1}">${me.online ? "You are ONLINE. Tap to go offline" : "Go online to get jobs"}</button>
+      ${passBox}
+      ${ps.status === "paid" ? `<button class="btn ${me.online ? "btn-orange" : "btn-green"}" data-act="rdonline" data-v="${me.online ? 0 : 1}">${me.online ? "You are ONLINE. Tap to go offline" : "Go online to get jobs"}</button>` : ""}
       <div class="sec">My jobs (${d.mine.length})</div>
       ${d.mine.map(job).join("") || '<div class="small">No active jobs.</div>'}
       <div class="sec">New jobs (${d.available.length})</div>
@@ -523,6 +535,9 @@ $app.addEventListener("click", async (e) => {
       R.mode = "login"; render(true); toast("Thanks! We will call you once you are approved.");
     } catch (err) { toast(err.message); }
   }
+  else if (a === "rdpass") {
+    try { const r = await rpc("deli_rider_pass_request", { p_token: R.token, p_method: v }); toast(r && r.status === "paid" ? "Your pass is already paid" : "Pass requested. Pay now, then wait for staff."); loadRider(); } catch (err) { toast(err.message); }
+  }
   else if (a === "rdonline") { try { await rpc("deli_rider_online", { p_token: R.token, p_online: v === "1" }); loadRider(); } catch (err) { toast(err.message); } }
   else if (a === "rdaccept") {
     try { const ok = await rpc("deli_rider_accept", { p_token: R.token, p_id: id }); toast(ok ? "Job accepted" : "Sorry, this job was taken"); loadRider(); } catch (err) { toast(err.message); loadRider(); }
@@ -558,6 +573,15 @@ $app.addEventListener("click", async (e) => {
     const { error } = await sb.from("deli_orders").update({ status: v }).eq("id", id);
     error ? toast(error.message) : loadDispatch();
   }
+  else if (a === "passok") {
+    const { error } = await sb.from("deli_rider_passes").update({ status: "confirmed", confirmed_at: new Date().toISOString() }).eq("id", id);
+    error ? toast(error.message) : (toast("Pass confirmed"), loadDispatch());
+  }
+  else if (a === "passgive") {
+    const amt = Number(dispatch.settings.day_pass || 10);
+    const { error } = await sb.from("deli_rider_passes").upsert({ rider_id: id, pass_date: todayLusaka(), amount: amt, method: "cash", ref: "STAFF", status: "confirmed", confirmed_at: new Date().toISOString() }, { onConflict: "rider_id,pass_date" });
+    error ? toast(error.message) : (toast("Pass recorded"), loadDispatch());
+  }
   else if (a === "cset") {
     if (v === "blocked" && !twice("b" + id, "Tap Block again to block this customer")) return;
     const { error } = await sb.from("deli_customers").update({ status: v }).eq("phone_key", id);
@@ -585,9 +609,9 @@ $app.addEventListener("click", async (e) => {
   else if (a === "rtrust") { await sb.from("deli_riders").update({ trusted: v === "1" }).eq("id", id); loadDispatch(); }
   else if (a === "ractive") { await sb.from("deli_riders").update({ active: v === "1" }).eq("id", id); loadDispatch(); }
   else if (a === "savesettings") {
-    const keys = ["fee_delivery", "fee_errand", "fee_ride", "fee_service", "cash_limit_new", "pay_to_mtn", "pay_to_airtel", "pay_to_zamtel"];
+    const keys = ["fee_delivery", "fee_errand", "fee_ride", "fee_service", "cash_limit_new", "day_pass", "pay_to_mtn", "pay_to_airtel", "pay_to_zamtel"];
     const rows = keys.map((k) => ({ key: k, value: document.getElementById("st-" + k).value.trim() }));
-    for (const r of rows.slice(0, 5)) if (!(Number(r.value) >= 0) || r.value === "") return toast("Prices must be numbers");
+    for (const r of rows.slice(0, 6)) if (!(Number(r.value) >= 0) || r.value === "") return toast("Prices must be numbers");
     const { error } = await sb.from("deli_settings").upsert(rows);
     error ? toast(error.message) : (toast("Saved"), loadFees(), loadDispatch());
   }
