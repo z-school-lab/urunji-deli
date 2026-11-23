@@ -370,7 +370,7 @@ async function render(soft) {
   if (!soft) { stopTimer(); lastSig = ""; window.scrollTo(0, 0); }
   let html;
   switch (route) {
-    case "": case "welcome": html = vWelcome(); break;
+    case "": case "welcome": html = vWelcome(); if (!soft && store.get("seen", false)) timer = setTimeout(() => { if (/^#?\/?(welcome)?$/.test(location.hash)) location.hash = "#/home"; }, 2000); break;
     case "home": html = vHome(); break;
     case "delivery": case "errand": case "ride":
       if (draft.service !== route) { draft = Object.assign(blankDraft(), { service: route, pay_method: draft.pay_method || "mtn" }); saveDraft(); }
