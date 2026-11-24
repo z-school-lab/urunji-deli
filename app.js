@@ -23,6 +23,26 @@ const SVC = { delivery: "Delivery", errand: "Errand", ride: "Ride" };
 const STATUS_TXT = { placed: "Order placed", accepted: "Rider assigned", picked_up: "Picked up", on_the_way: "On the way", delivered: "Delivered", cancelled: "Cancelled" };
 const PAY_NAME = { mtn: "MTN MoMo", airtel: "Airtel Money", zamtel: "Zamtel Kwacha", cash: "Cash" };
 
+/* ---------- operator (white-label) ---------- */
+let OP = { id: null, slug: "urunji-deli", name: "Urunji Deli", tagline: "Delivery, errands and rides", logo_url: null, primary: "#1B6B35", accent: "#F28C28", phone: CFG.SUPPORT_PHONE || "", paused: false, unknown: false };
+const hexOk = (h) => /^#[0-9a-fA-F]{6}$/.test(String(h || ""));
+const mixHex = (h, t, k) => { const a = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)), b = [1, 3, 5].map((i) => parseInt(t.slice(i, i + 2), 16)); return "#" + a.map((v, i) => Math.round(v + (b[i] - v) * k).toString(16).padStart(2, "0")).join(""); };
+function applyBrand() {
+  const r = document.documentElement.style;
+  if (OP.primary !== "#1B6B35") { r.setProperty("--green", OP.primary); r.setProperty("--green-d", mixHex(OP.primary, "#000000", 0.22)); r.setProperty("--green-t", mixHex(OP.primary, "#ffffff", 0.9)); }
+  if (OP.accent !== "#F28C28") { r.setProperty("--orange", OP.accent); r.setProperty("--orange-t", mixHex(OP.accent, "#ffffff", 0.84)); }
+  document.title = OP.name + ": delivery, errands and rides";
+  const tc = document.querySelector("meta[name=theme-color]"); if (tc) tc.setAttribute("content", OP.primary);
+  try {
+    const ic2 = (n) => new URL("" + n, location.href).href;
+    const logo = /^https:\/\//.test(OP.logo_url || "") ? OP.logo_url : null;
+    const man = { name: OP.name, short_name: OP.name.slice(0, 12), description: OP.tagline, start_url: location.origin + "/", scope: location.origin + "/", display: "standalone", orientation: "portrait", background_color: OP.primary, theme_color: OP.primary,
+      icons: logo ? [{ src: logo, sizes: "any", type: "image/png" }] : [{ src: ic2("icon-192.png"), sizes: "192x192", type: "image/png" }, { src: ic2("icon-512.png"), sizes: "512x512", type: "image/png" }] };
+    const link = document.querySelector("link[rel=manifest]"); if (link) link.href = URL.createObjectURL(new Blob([JSON.stringify(man)], { type: "application/manifest+json" }));
+  } catch {}
+}
+const brandImg = () => { const l = /^https:\/\//.test(OP.logo_url || "") ? OP.logo_url : null; return l || OP.slug === "urunji-deli" ? `<img src="${esc(l || "logo.png")}" alt="${esc(OP.name)}">` : `<span class="ini">${esc(initials(OP.name))}</span>`; };
+
 const I = {
   bike: '<path d="M5 18a3 3 0 100-6 3 3 0 000 6zm14 0a3 3 0 100-6 3 3 0 000 6zM9 15l3-6h4m-6 0h-3m6 0l2.5 6"/>',
   bag: '<path d="M6 8h12l1 12H5L6 8zm3 0a3 3 0 016 0"/>',
@@ -52,7 +72,7 @@ const CAT = {
 };
 const MST = { pending: "New order", accepted: "Preparing", ready: "Ready for rider", declined: "Declined" };
 const itemsText = (items) => (items || []).map((i) => i.qty + " x " + i.name).join(", ");
-const ic = (n, c = "currentColor", s = 24) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[n] || ""}</svg>`;
+const ic = (n, c = "currentColor", s = 24) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="${c === "#1B6B35" ? OP.primary : c === "#F28C28" ? OP.accent : c}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[n] || ""}</svg>`;
 
 /* ---------- state ---------- */
 let fees = { delivery: 15, errand: 20, ride: 25, service: 3 };
@@ -61,7 +81,7 @@ let draft = Object.assign(blankDraft(), store.get("draft", {}));
 let account = store.get("account", { name: "", phone: "" });
 let timer = null;
 let lastSig = "";
-let dispatch = { session: null, tab: "orders", orders: [], riders: [], customers: [], passes: [], merchants: [], owed: [], settings: {}, loading: false };
+let dispatch = { session: null, tab: "orders", orders: [], riders: [], customers: [], passes: [], merchants: [], owed: [], settings: {}, ops: [], op: store.get("dop", null), loading: false };
 let R = { token: store.get("rtoken", null), data: null, mode: "login" };
 let M = { token: store.get("mtoken", null), data: null, mode: "login", tab: "orders" };
 let shopsData = null, shopFilter = "all";
@@ -79,7 +99,7 @@ async function checkCust() {
   const k = pkey(account.phone);
   if (k.length < 9) { if (cust.key !== "") { cust = { key: "", blocked: false, limit: 150 }; if (location.hash === "#/pay") render(true); } return; }
   try {
-    const r = await rpc("deli_customer_check", { p_phone: account.phone });
+    const r = await rpc("deli_customer_check", { p_phone: account.phone, p_op: OP.id });
     const n = { key: k, blocked: !!r.blocked, limit: r.cash_limit === null || r.cash_limit === undefined ? null : Number(r.cash_limit) };
     if (JSON.stringify(n) !== JSON.stringify(cust)) { cust = n; if (location.hash === "#/pay") render(true); }
   } catch {}
@@ -111,7 +131,7 @@ const money = (svc) => (fees[svc] || 0) + (fees.service || 0);
 /* ---------- views ---------- */
 function vWelcome() {
   return `<div class="screen welcome"><div class="c1"></div><div class="c2"></div><div class="in">
-    <div class="logo-tile"><img src="logo.png" alt="Urunji Deli"></div>
+    <div class="logo-tile">${brandImg()}</div>
     <div><div style="font-size:34px;font-weight:800;letter-spacing:-.8px;line-height:1.1">Anything.<br>Anywhere in town.</div>
     <div style="font-size:16px;margin-top:10px;opacity:.92">Deliveries, errands and rides, done fast by riders you can trust.</div></div>
     <div style="display:flex;flex-direction:column;gap:14px">
@@ -131,7 +151,7 @@ const shopTile = (s) => {
     <div class="sname">${esc(s.name)}</div><div class="smeta">${esc(c.name)}</div><span class="badge ${s.is_open ? "" : "g"}" style="align-self:flex-start">${s.is_open ? "Open now" : "Closed"}</span></a>`;
 };
 const shopsBanner = () => `<a class="shopbanner" href="#/shops"><div class="ic">${ic("shop", "#fff", 28)}</div><div class="grow"><div style="font-weight:800;font-size:17px">Order from local shops</div><div style="font-size:13px;opacity:.92">Groceries, cakes, shawarma and more, delivered.</div></div><span class="seeall-w">Browse</span></a>`
-  + (shopsData && shopsData.length ? `<div class="row-between"><div class="sec" style="margin:0">Shops on Urunji Deli</div><a class="seeall" href="#/shops">See all</a></div><div class="shopscroll">${shopsData.slice(0, 10).map(shopTile).join("")}</div>` : "");
+  + (shopsData && shopsData.length ? `<div class="row-between"><div class="sec" style="margin:0">Shops on ${esc(OP.name)}</div><a class="seeall" href="#/shops">See all</a></div><div class="shopscroll">${shopsData.slice(0, 10).map(shopTile).join("")}</div>` : "");
 
 function vShops() {
   const cats = [["all", "All"], ["grocery", "Groceries"], ["bakery", "Cakes & bakery"], ["food", "Food & takeaways"], ["other", "Other"]];
@@ -139,7 +159,7 @@ function vShops() {
   return `<div class="screen"><div class="pad" style="padding-bottom:12px">${topbar("Shops")}
     <div class="chips nowrap">${cats.map(([k, n]) => `<button class="chip ${shopFilter === k ? "on" : ""}" data-act="shopcat" data-v="${k}">${n}</button>`).join("")}</div>
     ${shopsData === null ? `<div class="center-msg"><div class="spin"></div><div>Loading shops…</div></div>` : shown.length ? `<div class="shopgrid">${shown.map(shopTile).join("")}</div>` : `<div class="center-msg"><div class="t1">No shops here yet</div><div class="small">New shops are joining. Check back soon.</div></div>`}
-    <div class="card"><div class="t1">Own a shop?</div><div class="small">Grocery, cakes, shawarma, takeaways. Sell on Urunji Deli and we deliver for you.</div><a class="btn btn-ghost" href="#/merchant">Shop sign-in or sign-up</a></div>
+    <div class="card"><div class="t1">Own a shop?</div><div class="small">Grocery, cakes, shawarma, takeaways. Sell on ${esc(OP.name)} and we deliver for you.</div><a class="btn btn-ghost" href="#/merchant">Shop sign-in or sign-up</a></div>
     ${powered}</div>${tabs("shops")}</div>`;
 }
 
@@ -167,7 +187,7 @@ function vBasket() {
   if (!cart.mid || !lines.length) return `<div class="screen"><div class="pad">${topbar("Basket", "#/shops")}<div class="center-msg"><div class="t1">Your basket is empty</div><a class="btn btn-green" href="#/shops" style="max-width:220px">Browse shops</a></div></div></div>`;
   const fee = fees.delivery || 0, sf = fees.service || 0, total = cartTotal() + fee + sf;
   return `<div class="screen"><div class="pad">${topbar("Your basket", "#/shop/" + cart.mid)}
-    ${cust.blocked ? `<div class="note orange"><div><b>Sorry, we cannot take orders from this number right now.</b> Please call us on ${esc(CFG.SUPPORT_PHONE)}.</div></div>` : ""}
+    ${cust.blocked ? `<div class="note orange"><div><b>Sorry, we cannot take orders from this number right now.</b> Please call us on ${esc(OP.phone)}.</div></div>` : ""}
     <div class="t1">${esc(cart.name)}</div>
     <div class="card">${lines.map(([id, l]) => `<div class="item slim"><div class="grow"><div class="t1">${esc(l.name)}</div><div class="t2">${K(l.price)} each</div></div><div class="stepper"><button data-act="cartsub" data-id="${id}" data-mid="${cart.mid}" aria-label="Less">−</button><b>${l.qty}</b><button data-act="cartadd" data-id="${id}" data-mid="${cart.mid}" aria-label="More">+</button></div></div>`).join("")}
       <div class="hr"></div><div class="rowline"><span>Items</span><b>${K(cartTotal())}</b></div><div class="rowline"><span>Delivery</span><b>${K(fee)}</b></div>${sf > 0 ? `<div class="rowline"><span>Service fee</span><b>${K(sf)}</b></div>` : ""}<div class="hr"></div><div class="total"><span>Total</span><span>${K(total)}</span></div></div>
@@ -188,7 +208,7 @@ function vBasket() {
 function vHome() {
   const act = myOrders();
   return `<div class="screen">
-    <div class="hhead"><div class="brand"><div class="tile"><img src="logo.png" alt=""></div><b>Urunji Deli</b></div>
+    <div class="hhead"><div class="brand"><div class="tile">${brandImg()}</div><b>${esc(OP.name)}</b></div>
       <div><div style="font-size:26px;font-weight:800;letter-spacing:-.5px">${account.name ? "Hello, " + esc(account.name.split(" ")[0]) : "Hello there"}</div>
       <div style="opacity:.9;font-size:15px;margin-top:2px">What do you need today?</div></div></div>
     <div class="pad" style="padding-top:20px">
@@ -251,7 +271,7 @@ function vPay() {
   if (cashOff && draft.pay_method === "cash") draft.pay_method = "mtn";
   return `<div class="screen"><div class="pad">
     ${topbar("Pay", "#/" + svc)}
-    ${cust.blocked ? `<div class="note orange"><div><b>Sorry, we cannot take orders from this number right now.</b> Please call us on ${esc(CFG.SUPPORT_PHONE)}.</div></div>` : ""}
+    ${cust.blocked ? `<div class="note orange"><div><b>Sorry, we cannot take orders from this number right now.</b> Please call us on ${esc(OP.phone)}.</div></div>` : ""}
     <div class="card"><div class="rowline"><span>${SVC[svc]}</span><b>${K(fees[svc])}</b></div>${fees.service > 0 ? `<div class="rowline"><span>Service fee</span><b>${K(fees.service)}</b></div>` : ""}<div class="hr"></div><div class="total"><span>Total</span><span>${K(money(svc))}</span></div></div>
     <div class="sec">Your details</div>
     <input class="input" data-bind-acc="name" placeholder="Your name" value="${esc(acc.name)}" autocomplete="name">
@@ -287,8 +307,8 @@ function vTrack(o) {
     <div class="map"><a class="back" href="#/orders" aria-label="Back">${ic("back", "#0B1F3A")}</a>
       <svg viewBox="0 0 430 300" preserveAspectRatio="xMidYMid slice"><rect width="430" height="300" fill="#E9EFE8"/>
       <path d="M-10 70 L440 110 M-10 200 L440 170 M120 -10 L160 310 M300 -10 L270 310" stroke="#fff" stroke-width="14" fill="none"/>
-      <path d="M90 230 C150 180 180 150 230 140 S320 90 350 70" stroke="#1B6B35" stroke-width="5" stroke-dasharray="2 10" stroke-linecap="round" fill="none"/>
-      <circle cx="90" cy="230" r="10" fill="#1B6B35" stroke="#fff" stroke-width="3"/><rect x="342" y="62" width="18" height="18" rx="4" fill="#F28C28" stroke="#fff" stroke-width="3"/></svg></div>
+      <path d="M90 230 C150 180 180 150 230 140 S320 90 350 70" stroke="${OP.primary}" stroke-width="5" stroke-dasharray="2 10" stroke-linecap="round" fill="none"/>
+      <circle cx="90" cy="230" r="10" fill="${OP.primary}" stroke="#fff" stroke-width="3"/><rect x="342" y="62" width="18" height="18" rx="4" fill="${OP.accent}" stroke="#fff" stroke-width="3"/></svg></div>
     <div class="sheet"><div class="grab"></div>
       <div class="orow"><div class="grow"><div style="font-size:20px;font-weight:800">${STATUS_TXT[o.status]}</div><div class="t2">${SVC[o.service]} · ${esc(o.code)}</div></div><span class="badge ${o.status === "cancelled" ? "g" : ""}">${K(total)}</span></div>
       ${o.status !== "cancelled" ? stepBar(o.status) : ""}
@@ -302,7 +322,7 @@ function vTrack(o) {
       <div class="card"><div class="rowline"><span>From</span><b>${esc(o.pickup)}</b></div><div class="rowline"><span>To</span><b>${esc(o.dropoff)}</b></div>${o.details ? `<div class="rowline"><span>Note</span><b>${esc(o.details)}</b></div>` : ""}</div>
       ${o.status === "picked_up" || o.status === "on_the_way" ? `<button class="btn btn-green" data-act="received" data-code="${esc(o.code)}">${o.service === "ride" ? "I have arrived safely" : "I have received my order"}</button>` : ""}
       ${o.status === "delivered" ? `<a class="btn btn-green" href="#/delivered/${esc(o.code)}">Rate your rider</a>` : ""}
-      <a class="btn btn-ghost" href="https://wa.me/${intl(CFG.SUPPORT_PHONE)}?text=${encodeURIComponent("Hello Urunji Deli, order " + o.code)}" target="_blank" rel="noopener">Need help? WhatsApp us</a>
+      <a class="btn btn-ghost" href="https://wa.me/${intl(OP.phone)}?text=${encodeURIComponent("Hello " + OP.name + ", order " + o.code)}" target="_blank" rel="noopener">Need help? WhatsApp us</a>
     </div></div>`;
 }
 
@@ -310,7 +330,7 @@ function vDelivered(o) {
   if (!o) return `<div class="screen"><div class="center-msg"><div class="spin"></div></div></div>`;
   const rated = o.rating;
   return `<div class="screen"><div class="dhead"><div class="bigcheck">${ic("check", "#1B6B35", 44)}</div>
-      <div style="font-size:28px;font-weight:800">${o.service === "ride" ? "You have arrived" : "Delivered!"}</div><div style="opacity:.92">Thank you for using Urunji Deli.</div></div>
+      <div style="font-size:28px;font-weight:800">${o.service === "ride" ? "You have arrived" : "Delivered!"}</div><div style="opacity:.92">Thank you for using ${esc(OP.name)}.</div></div>
     <div class="pad">
       <div class="card" style="align-items:center;text-align:center"><div class="sec">${rated ? "Thanks for your rating" : "How was your rider?"}</div>
         <div class="stars">${[1, 2, 3, 4, 5].map((n) => `<button class="star" data-act="rate" data-v="${n}" data-code="${esc(o.code)}" ${rated ? "disabled" : ""} aria-label="${n} stars">${ic("star", n <= (rated || 0) ? "#F28C28" : "#C9D3CB", 40).replace('fill="none"', `fill="${n <= (rated || 0) ? "#F28C28" : "none"}"`)}</button>`).join("")}</div></div>
@@ -331,10 +351,10 @@ function vOrders(list) {
 }
 
 function vHelp() {
-  const wa = `https://wa.me/${intl(CFG.SUPPORT_PHONE)}`;
+  const wa = `https://wa.me/${intl(OP.phone)}`;
   return `<div class="screen"><div class="pad" style="padding-bottom:12px"><div class="h1">Help</div>
     <div class="card"><div class="t1">Talk to us</div><div class="small">We reply fast on WhatsApp.</div>
-      <a class="btn btn-green" href="${wa}" target="_blank" rel="noopener">WhatsApp us</a><a class="btn btn-ghost" href="tel:${esc(CFG.SUPPORT_PHONE)}">Call ${esc(CFG.SUPPORT_PHONE)}</a></div>
+      <a class="btn btn-green" href="${wa}" target="_blank" rel="noopener">WhatsApp us</a><a class="btn btn-ghost" href="tel:${esc(OP.phone)}">Call ${esc(OP.phone)}</a></div>
     <div class="card"><div class="t1">How it works</div><div class="small">1. Choose delivery, errand or ride.<br>2. Enter the places and pay with mobile money or cash.<br>3. A rider is assigned and you track the order.<br>4. Give the rider your 4-digit code when you get your order.</div></div>
     <div class="card"><div class="t1">Mobile money payments</div><div class="small">After ordering, send the money to the number shown with your order code as the reference. We confirm it by hand, usually within minutes.</div></div>
     ${powered}</div>${tabs("help")}</div>`;
@@ -409,7 +429,7 @@ function vDispatch() {
   } else if (D.tab === "merchants") {
     const owedBy = {};
     D.owed.forEach((x) => { const e = owedBy[x.merchant_id] || (owedBy[x.merchant_id] = { n: 0, amt: 0, ids: [] }); e.n++; e.amt += Number(x.items_total) - Number(x.commission); e.ids.push(x.id); });
-    body = `<div class="small">Customers pay Urunji Deli. After an order is delivered, you pay the shop its share (items minus commission) and tap <b>Mark paid out</b>.</div>
+    body = `<div class="small">Customers pay ${esc(OP.name)}. After an order is delivered, you pay the shop its share (items minus commission) and tap <b>Mark paid out</b>.</div>
       <div class="d-order" style="margin-top:12px"><div class="sec">Add a shop</div><div class="d-row"><input class="input d-input" id="nmN" placeholder="Shop name" style="flex:1;min-width:140px"><input class="input d-input" id="nmP" placeholder="Phone" style="flex:1;min-width:120px"></div>
         <div class="d-row"><select class="input d-input" id="nmC" style="flex:1"><option value="grocery">Groceries</option><option value="bakery">Cakes &amp; bakery</option><option value="food">Food &amp; takeaways</option><option value="other">Other</option></select><input class="input d-input" id="nmA" placeholder="Address / landmark" style="flex:2;min-width:140px"></div>
         <div class="d-row"><input class="input d-input" id="nmI" inputmode="numeric" maxlength="6" placeholder="Login PIN (4-6 digits)" style="flex:1;min-width:140px"><input class="input d-input" id="nmM" inputmode="decimal" value="10" placeholder="Commission %" style="flex:1;min-width:110px"></div>
@@ -429,21 +449,28 @@ function vDispatch() {
       <div class="sec" style="margin-top:8px">Where customers send money</div>${f("pay_to_mtn", "MTN MoMo number")}${f("pay_to_airtel", "Airtel Money number")}${f("pay_to_zamtel", "Zamtel Kwacha number")}
       <button class="btn btn-green" data-act="savesettings">Save settings</button></div>`;
   }
-  return `<div class="screen wide"><div class="pad"><div class="d-top"><div class="h1">Dispatch</div><div class="d-row"><button class="btn btn-ghost btn-sm" data-act="refresh">Refresh</button><button class="btn btn-ghost btn-sm" data-act="logout">Sign out</button></div></div>
+  return `<div class="screen wide"><div class="pad"><div class="d-top"><div><div class="h1">Dispatch</div>${D.ops.length > 1 ? `<select class="input d-input" data-dop="1" style="margin-top:6px">${D.ops.map((x) => `<option value="${x.id}" ${x.id === D.op ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select>` : D.ops.length === 1 ? `<div class="small">${esc(D.ops[0].name)}</div>` : ""}</div><div class="d-row"><button class="btn btn-ghost btn-sm" data-act="refresh">Refresh</button><button class="btn btn-ghost btn-sm" data-act="logout">Sign out</button></div></div>
     <div class="d-tabs">${tabsHtml}</div>${D.loading ? '<div class="small">Loading…</div>' : ""}${body}</div></div>`;
 }
 
 async function loadDispatch(keepFocus) {
   if (!sb || !dispatch.session) return;
   if (keepFocus && $app.contains(document.activeElement) && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
+  const os = await sb.from("deli_operators").select("id,slug,name").order("name");
+  if (!os.error && os.data && os.data.length) {
+    dispatch.ops = os.data;
+    if (!os.data.some((x) => x.id === dispatch.op)) { dispatch.op = (os.data.find((x) => x.id === OP.id) || os.data[0]).id; store.set("dop", dispatch.op); }
+  }
+  if (!dispatch.op) { toast("No operator found for this staff account."); return; }
+  const eo = dispatch.op;
   const [o, r, s, cs, ps, ms, ow] = await Promise.all([
-    sb.from("deli_orders").select("*").order("created_at", { ascending: false }).limit(80),
-    sb.from("deli_riders").select("*").order("name"),
-    sb.from("deli_settings").select("*"),
-    sb.from("deli_customers").select("*").order("updated_at", { ascending: false }).limit(150),
-    sb.from("deli_rider_passes").select("*").order("created_at", { ascending: false }).limit(200),
-    sb.from("deli_merchants").select("*").order("created_at", { ascending: false }),
-    sb.from("deli_orders").select("id,merchant_id,items_total,commission").eq("status", "delivered").eq("pay_status", "confirmed").eq("merchant_paid", false).not("merchant_id", "is", null),
+    sb.from("deli_orders").select("*").eq("operator_id", eo).order("created_at", { ascending: false }).limit(80),
+    sb.from("deli_riders").select("*").eq("operator_id", eo).order("name"),
+    sb.from("deli_settings").select("*").eq("operator_id", eo),
+    sb.from("deli_customers").select("*").eq("operator_id", eo).order("updated_at", { ascending: false }).limit(150),
+    sb.from("deli_rider_passes").select("*").eq("operator_id", eo).order("created_at", { ascending: false }).limit(200),
+    sb.from("deli_merchants").select("*").eq("operator_id", eo).order("created_at", { ascending: false }),
+    sb.from("deli_orders").select("id,merchant_id,items_total,commission").eq("operator_id", eo).eq("status", "delivered").eq("pay_status", "confirmed").eq("merchant_paid", false).not("merchant_id", "is", null),
   ]);
   if (o.error) { toast(o.error.message.includes("permission") || o.error.code === "42501" ? "This email is not on the staff list." : o.error.message); return; }
   dispatch.orders = o.data || []; dispatch.riders = r.data || []; dispatch.customers = cs.data || []; dispatch.passes = ps.data || []; dispatch.merchants = ms.data || []; dispatch.owed = ow.data || [];
@@ -495,7 +522,7 @@ function vRider() {
   const avail = (o) => `<div class="d-order"><div class="d-row" style="justify-content:space-between"><b>${o.shop_name ? esc(o.shop_name) + " · " : ""}${SVC[o.service]} · ${K(o.total)}</b><span class="badge">${o.pay_method === "cash" ? "Cash" : PAY_NAME[o.pay_method]}</span></div>
       <div class="t2"><b>From:</b> ${esc(o.pickup)}</div><div class="t2"><b>To:</b> ${esc(o.dropoff)}</div>${o.details ? `<div class="t2">${esc(o.details)}</div>` : ""}
       <button class="btn btn-green" data-act="rdaccept" data-id="${o.id}">Accept job</button></div>`;
-  return `<div class="screen"><div class="hhead"><div class="brand"><div class="tile"><img src="logo.png" alt=""></div><b>Rider</b></div>
+  return `<div class="screen"><div class="hhead"><div class="brand"><div class="tile">${brandImg()}</div><b>Rider</b></div>
       <div><div style="font-size:24px;font-weight:800">Hi, ${esc(me.name.split(" ")[0])}</div><div style="opacity:.9;font-size:14px">Delivered today: ${d.done_today}${me.trusted ? " · Trusted rider" : ""}</div></div></div>
     <div class="pad" style="padding-top:18px">
       ${passBox}
@@ -522,7 +549,7 @@ function vMerchant() {
   if (!M.token) {
     const reg = M.mode === "register";
     return `<div class="screen"><div class="pad">${topbar(reg ? "Register your shop" : "Shop sign-in", "#/shops")}
-      <div class="note green">${ic("shop", "#1B6B35")}<div>${reg ? "Sell on Urunji Deli. We will call you to approve your shop." : "Sign in with your shop phone number and PIN."}</div></div>
+      <div class="note green">${ic("shop", "#1B6B35")}<div>${reg ? "Sell on " + OP.name + ". We will call you to approve your shop." : "Sign in with your shop phone number and PIN."}</div></div>
       ${reg ? '<input class="input" id="mName" placeholder="Shop name" autocomplete="organization">' : ""}
       <input class="input" id="mPhone" inputmode="tel" placeholder="Shop phone number" autocomplete="tel">
       ${reg ? `<select class="input" id="mCat"><option value="grocery">Groceries</option><option value="bakery">Cakes &amp; bakery</option><option value="food">Food &amp; takeaways (shawarma, chicken...)</option><option value="other">Other</option></select><input class="input" id="mAddr" placeholder="Shop address or landmark">` : ""}
@@ -566,10 +593,10 @@ function vMerchant() {
   } else {
     body = `<div class="d-order"><div class="sec">About your shop</div><label class="lbl">Address or landmark</label><input class="input d-input" id="msAddr" value="${esc(me.address || "")}"><label class="lbl">Short description</label><textarea class="input" id="msDesc" rows="3" placeholder="e.g. Fresh bread, cakes and cupcakes made daily">${esc(me.description || "")}</textarea>
       <button class="btn btn-green btn-sm" data-act="mshopsave">Save</button></div>
-      <div class="small">Our commission on items is ${esc(me.commission_pct)}%. We pay you the rest after each delivered order. Call us on ${esc(CFG.SUPPORT_PHONE)} to change your shop name, phone or photo.</div>
+      <div class="small">Our commission on items is ${esc(me.commission_pct)}%. We pay you the rest after each delivered order. Call us on ${esc(OP.phone)} to change your shop name, phone or photo.</div>
       <button class="btn btn-ghost" data-act="mlogout">Sign out</button>`;
   }
-  return `<div class="screen"><div class="hhead"><div class="brand"><div class="tile"><img src="logo.png" alt=""></div><b>Shop</b></div>
+  return `<div class="screen"><div class="hhead"><div class="brand"><div class="tile">${brandImg()}</div><b>Shop</b></div>
       <div><div style="font-size:24px;font-weight:800">${esc(me.name)}</div><div style="opacity:.9;font-size:14px">${me.is_open ? "Open for orders" : "Closed. Customers cannot order."}</div></div></div>
     <div class="pad" style="padding-top:18px">
       <button class="btn ${me.is_open ? "btn-orange" : "btn-green"}" data-act="mopen" data-v="${me.is_open ? 0 : 1}">${me.is_open ? "You are OPEN. Tap to close shop" : "Shop is CLOSED. Tap to open"}</button>
@@ -586,13 +613,22 @@ async function loadMerchant(keepFocus) {
   if (location.hash.startsWith("#/merchant")) render(true);
 }
 async function loadShops() {
-  try { shopsData = (await rpc("deli_shops")) || []; } catch { shopsData = []; }
+  try { shopsData = (await rpc("deli_shops", { p_op: OP.id })) || []; } catch { shopsData = []; }
   if (/^#\/(home|shops)$/.test(location.hash)) render(true);
 }
 async function loadMenu(id) {
   try { menuCache[id] = (await rpc("deli_shop_menu", { p_id: id })) || null; } catch { menuCache[id] = null; }
   if (location.hash === "#/shop/" + id) render(true);
 }
+
+function vPaused() {
+  const wa = `https://wa.me/${intl(OP.phone)}`;
+  return `<div class="screen"><div class="pad"><div class="center-msg" style="margin-top:40px"><div class="logo-tile" style="width:120px;height:120px;border-radius:28px;border:1px solid var(--border)">${brandImg()}</div>
+    <div class="t1" style="font-size:22px">${esc(OP.name)} is paused right now</div><div class="small">We are not taking orders at the moment. Please contact us.</div></div>
+    <a class="btn btn-green" href="${wa}" target="_blank" rel="noopener">WhatsApp us</a><a class="btn btn-ghost" href="tel:${esc(OP.phone)}">Call ${esc(OP.phone)}</a>
+    <a class="small" style="text-align:center" href="#/dispatch">Staff sign-in</a></div></div>`;
+}
+function vUnknown() { return `<div class="screen"><div class="pad"><div class="center-msg" style="margin-top:80px"><div class="t1" style="font-size:22px">This address is not set up yet</div><div class="small">Please check the web address, or contact Urunji Innovations on ${esc(CFG.SUPPORT_PHONE || "")}.</div></div></div></div>`; }
 
 /* ---------- router ---------- */
 function stopTimer() { clearInterval(timer); timer = null; }
@@ -601,6 +637,8 @@ async function render(soft) {
   const hash = location.hash.replace(/^#\/?/, "");
   const [route, arg] = hash.split("/");
   if (!soft) { stopTimer(); lastSig = ""; window.scrollTo(0, 0); }
+  if (OP.unknown) { $app.innerHTML = vUnknown(); return; }
+  if (OP.paused && route !== "dispatch") { $app.innerHTML = vPaused(); return; }
   let html;
   switch (route) {
     case "": case "welcome": html = vWelcome(); if (!soft && store.get("seen", false)) timer = setTimeout(() => { if (/^#?\/?(welcome)?$/.test(location.hash)) location.hash = "#/home"; }, 2000); break;
@@ -682,11 +720,12 @@ const shrink = (file, max = 700) => new Promise((ok, no) => {
 $app.addEventListener("change", async (e) => {
   const t = e.target;
   if (t.dataset && t.dataset.bindAcc === "phone") checkCust();
+  if (t.dataset && t.dataset.dop) { dispatch.op = t.value; store.set("dop", t.value); dispatch.orders = []; dispatch.riders = []; dispatch.customers = []; dispatch.passes = []; dispatch.merchants = []; dispatch.owed = []; dispatch.settings = {}; render(true); loadDispatch(); }
   if (t.dataset && t.dataset.file === "mimg" && t.files && t.files[0]) {
     const id = t.dataset.id; toast("Uploading photo…");
     try {
       const blob = await shrink(t.files[0]);
-      const path = id + "-" + Date.now() + ".jpg";
+      const path = dispatch.op + "/" + id + "-" + Date.now() + ".jpg";
       const up = await sb.storage.from("deli-shops").upload(path, blob, { contentType: "image/jpeg", upsert: true });
       if (up.error) throw up.error;
       const url = sb.storage.from("deli-shops").getPublicUrl(path).data.publicUrl;
@@ -722,7 +761,7 @@ $app.addEventListener("click", async (e) => {
         p_service: svc, p_name: account.name, p_phone: account.phone, p_pickup: draft.pickup, p_dropoff: draft.dropoff,
         p_item_type: svc === "delivery" ? draft.item_type : null, p_item_size: svc === "delivery" ? draft.item_size : null,
         p_details: draft.details || null, p_budget: draft.budget ? Number(String(draft.budget).replace(/[^0-9.]/g, "")) || null : null,
-        p_pay_method: draft.pay_method,
+        p_pay_method: draft.pay_method, p_op: OP.id,
       });
       addOrder(r.code, svc);
       const keep = draft.pay_method; draft = Object.assign(blankDraft(), { pay_method: keep }); saveDraft();
@@ -769,14 +808,14 @@ $app.addEventListener("click", async (e) => {
   else if (a === "mmode") { M.mode = v; render(true); }
   else if (a === "mlogin") {
     try {
-      const r = await rpc("deli_merchant_login", { p_phone: document.getElementById("mPhone").value, p_pin: document.getElementById("mPin").value });
+      const r = await rpc("deli_merchant_login", { p_phone: document.getElementById("mPhone").value, p_pin: document.getElementById("mPin").value, p_op: OP.id });
       if (r.error) return toast(r.error);
       M.token = r.token; store.set("mtoken", r.token); M.data = null; M.tab = "orders"; render();
     } catch (err) { toast(err.message); }
   }
   else if (a === "mregister") {
     try {
-      await rpc("deli_merchant_register", { p_name: document.getElementById("mName").value, p_phone: document.getElementById("mPhone").value, p_category: document.getElementById("mCat").value, p_address: document.getElementById("mAddr").value, p_pin: document.getElementById("mPin").value });
+      await rpc("deli_merchant_register", { p_name: document.getElementById("mName").value, p_phone: document.getElementById("mPhone").value, p_category: document.getElementById("mCat").value, p_address: document.getElementById("mAddr").value, p_pin: document.getElementById("mPin").value, p_op: OP.id });
       M.mode = "login"; render(true); toast("Thanks! We will call you once your shop is approved.");
     } catch (err) { toast(err.message); }
   }
@@ -809,14 +848,14 @@ $app.addEventListener("click", async (e) => {
   else if (a === "rdmode") { R.mode = v; render(true); }
   else if (a === "rdlogin") {
     try {
-      const r = await rpc("deli_rider_login", { p_phone: document.getElementById("gPhone").value, p_pin: document.getElementById("gPin").value });
+      const r = await rpc("deli_rider_login", { p_phone: document.getElementById("gPhone").value, p_pin: document.getElementById("gPin").value, p_op: OP.id });
       if (r.error) return toast(r.error);
       R.token = r.token; store.set("rtoken", r.token); R.data = null; render();
     } catch (err) { toast(err.message); }
   }
   else if (a === "rdregister") {
     try {
-      await rpc("deli_rider_register", { p_name: document.getElementById("gName").value, p_phone: document.getElementById("gPhone").value, p_plate: document.getElementById("gPlate").value, p_pin: document.getElementById("gPin").value });
+      await rpc("deli_rider_register", { p_name: document.getElementById("gName").value, p_phone: document.getElementById("gPhone").value, p_plate: document.getElementById("gPlate").value, p_pin: document.getElementById("gPin").value, p_op: OP.id });
       R.mode = "login"; render(true); toast("Thanks! We will call you once you are approved.");
     } catch (err) { toast(err.message); }
   }
@@ -864,12 +903,12 @@ $app.addEventListener("click", async (e) => {
   }
   else if (a === "passgive") {
     const amt = Number(dispatch.settings.day_pass || 10);
-    const { error } = await sb.from("deli_rider_passes").upsert({ rider_id: id, pass_date: todayLusaka(), amount: amt, method: "cash", ref: "STAFF", status: "confirmed", confirmed_at: new Date().toISOString() }, { onConflict: "rider_id,pass_date" });
+    const { error } = await sb.from("deli_rider_passes").upsert({ operator_id: dispatch.op, rider_id: id, pass_date: todayLusaka(), amount: amt, method: "cash", ref: "STAFF", status: "confirmed", confirmed_at: new Date().toISOString() }, { onConflict: "rider_id,pass_date" });
     error ? toast(error.message) : (toast("Pass recorded"), loadDispatch());
   }
   else if (a === "cset") {
     if (v === "blocked" && !twice("b" + id, "Tap Block again to block this customer")) return;
-    const { error } = await sb.from("deli_customers").update({ status: v }).eq("phone_key", id);
+    const { error } = await sb.from("deli_customers").update({ status: v }).eq("operator_id", dispatch.op).eq("phone_key", id);
     error ? toast(error.message) : (toast("Saved"), loadDispatch());
   }
   else if (a === "clearinc") { const { error } = await sb.from("deli_orders").update({ incident_level: null }).eq("id", id); error ? toast(error.message) : loadDispatch(); }
@@ -881,7 +920,7 @@ $app.addEventListener("click", async (e) => {
     const name = document.getElementById("rN").value.trim(); if (!name) return toast("Enter a name");
     const pin = document.getElementById("rI").value.trim();
     if (pin && !/^[0-9]{4,6}$/.test(pin)) return toast("PIN must be 4 to 6 digits");
-    const { data: nr, error } = await sb.from("deli_riders").insert({ name, phone: document.getElementById("rP").value.trim(), plate: document.getElementById("rL").value.trim(), trusted: document.getElementById("rT").checked }).select().single();
+    const { data: nr, error } = await sb.from("deli_riders").insert({ operator_id: dispatch.op, name, phone: document.getElementById("rP").value.trim(), plate: document.getElementById("rL").value.trim(), trusted: document.getElementById("rT").checked }).select().single();
     if (error) return toast(error.message);
     if (pin) { try { await rpc("deli_staff_set_pin", { p_rider: nr.id, p_pin: pin }); } catch (err) { toast(err.message); } }
     toast(pin ? "Rider added" : "Rider added. Set a PIN so they can sign in."); loadDispatch();
@@ -896,7 +935,7 @@ $app.addEventListener("click", async (e) => {
     const name = document.getElementById("nmN").value.trim(); if (name.length < 2) return toast("Enter the shop name");
     const pin = document.getElementById("nmI").value.trim(); if (pin && !/^[0-9]{4,6}$/.test(pin)) return toast("PIN must be 4 to 6 digits");
     const pct = Number(document.getElementById("nmM").value); if (!(pct >= 0 && pct <= 50)) return toast("Commission must be 0 to 50");
-    const { data: nm, error } = await sb.from("deli_merchants").insert({ name, phone: document.getElementById("nmP").value.trim(), category: document.getElementById("nmC").value, address: document.getElementById("nmA").value.trim(), commission_pct: pct, featured: document.getElementById("nmF").checked, approved: true }).select().single();
+    const { data: nm, error } = await sb.from("deli_merchants").insert({ operator_id: dispatch.op, name, phone: document.getElementById("nmP").value.trim(), category: document.getElementById("nmC").value, address: document.getElementById("nmA").value.trim(), commission_pct: pct, featured: document.getElementById("nmF").checked, approved: true }).select().single();
     if (error) return toast(error.message);
     if (pin) { try { await rpc("deli_staff_set_merchant_pin", { p_merchant: nm.id, p_pin: pin }); } catch (err) { toast(err.message); } }
     toast(pin ? "Shop added" : "Shop added. Set a PIN so the owner can sign in."); loadDispatch();
@@ -928,17 +967,25 @@ $app.addEventListener("click", async (e) => {
   else if (a === "ractive") { await sb.from("deli_riders").update({ active: v === "1" }).eq("id", id); loadDispatch(); }
   else if (a === "savesettings") {
     const keys = ["fee_delivery", "fee_errand", "fee_ride", "fee_service", "cash_limit_new", "day_pass", "pay_to_mtn", "pay_to_airtel", "pay_to_zamtel"];
-    const rows = keys.map((k) => ({ key: k, value: document.getElementById("st-" + k).value.trim() }));
+    const rows = keys.map((k) => ({ operator_id: dispatch.op, key: k, value: document.getElementById("st-" + k).value.trim() }));
     for (const r of rows.slice(0, 6)) if (!(Number(r.value) >= 0) || r.value === "") return toast("Prices must be numbers");
-    const { error } = await sb.from("deli_settings").upsert(rows);
+    const { error } = await sb.from("deli_settings").upsert(rows, { onConflict: "operator_id,key" });
     error ? toast(error.message) : (toast("Saved"), loadFees(), loadDispatch());
   }
 });
 
 async function loadFees() {
-  try { const f = await rpc("deli_fees"); if (f) { fees = { delivery: Number(f.delivery), errand: Number(f.errand), ride: Number(f.ride), service: Number(f.service) }; } } catch {}
+  try { const f = await rpc("deli_fees", { p_op: OP.id }); if (f) { fees = { delivery: Number(f.delivery), errand: Number(f.errand), ride: Number(f.ride), service: Number(f.service) }; } } catch {}
 }
 
 window.addEventListener("hashchange", () => render());
 if ("serviceWorker" in navigator && location.protocol.startsWith("http")) { /* offline cache can be added later */ }
-loadFees().finally(() => render());
+async function loadOperator() {
+  try {
+    const c = await rpc("deli_operator_config", { p_host: location.hostname, p_slug: new URLSearchParams(location.search).get("op") || null });
+    if (c === null) OP.unknown = true;
+    else OP = Object.assign(OP, { id: c.id, slug: c.slug, name: c.name, tagline: c.tagline || OP.tagline, logo_url: c.logo_url, primary: hexOk(c.primary_color) ? c.primary_color : OP.primary, accent: hexOk(c.accent_color) ? c.accent_color : OP.accent, phone: c.support_phone || OP.phone, paused: !!c.paused });
+  } catch {}
+  applyBrand();
+}
+loadOperator().then(loadFees).finally(() => render());
