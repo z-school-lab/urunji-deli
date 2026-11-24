@@ -81,7 +81,7 @@ let draft = Object.assign(blankDraft(), store.get("draft", {}));
 let account = store.get("account", { name: "", phone: "" });
 let timer = null;
 let lastSig = "";
-let dispatch = { session: null, tab: "orders", orders: [], riders: [], customers: [], passes: [], merchants: [], owed: [], settings: {}, ops: [], op: store.get("dop", null), loading: false };
+let dispatch = { session: null, tab: "orders", orders: [], riders: [], customers: [], passes: [], merchants: [], owed: [], settings: {}, ops: [], op: store.get("dop", null), isSuper: undefined, overview: [], loading: false };
 let R = { token: store.get("rtoken", null), data: null, mode: "login" };
 let M = { token: store.get("mtoken", null), data: null, mode: "login", tab: "orders" };
 let shopsData = null, shopFilter = "all";
@@ -379,7 +379,7 @@ function vDispatch() {
     <input class="input" id="sEmail" type="email" placeholder="Staff email" autocomplete="username">
     <input class="input" id="sPass" type="password" placeholder="Password" autocomplete="current-password">
     <button class="btn btn-green" data-act="login">Sign in</button></div></div>`;
-  const tabsHtml = ["orders", "customers", "riders", "merchants", "settings"].map((t) => `<button class="chip ${D.tab === t ? "on" : ""}" data-act="dtab" data-v="${t}">${t[0].toUpperCase() + t.slice(1)}</button>`).join("");
+  const tabsHtml = ["orders", "customers", "riders", "merchants", "settings"].concat(D.isSuper ? ["operators"] : []).map((t) => `<button class="chip ${D.tab === t ? "on" : ""}" data-act="dtab" data-v="${t}">${t[0].toUpperCase() + t.slice(1)}</button>`).join("");
   let body = "";
   if (D.tab === "orders") {
     const active = D.orders.filter((o) => !["delivered", "cancelled"].includes(o.status));
@@ -426,6 +426,29 @@ function vDispatch() {
       <div class="d-grid" style="margin-top:12px">${D.riders.map((r) => `<div class="d-order"><div class="d-row" style="justify-content:space-between"><b>${esc(r.name)} ${r.trusted ? "★" : ""}</b><span class="badge ${r.approved === false ? "o" : r.active ? "" : "g"}">${r.approved === false ? "Waiting for approval" : r.active ? (r.online ? "Online" : "Active") : "Off"}</span></div><div class="t2">${esc(r.phone || "")} · ${esc(r.plate || "")}</div>
         ${(() => { const tp = D.passes.find((p) => p.rider_id === r.id && p.pass_date === todayLusaka()); const lp = D.passes.find((p) => p.rider_id === r.id && p.status === "confirmed"); return `<div class="d-row"><span class="badge ${tp && tp.status === "confirmed" ? "" : "o"}">${tp ? (tp.status === "confirmed" ? "Pass paid today" : "Pass waiting: ref " + esc(tp.ref)) : "No pass today"}</span>${tp && tp.status === "awaiting" ? `<button class="btn btn-green btn-sm" data-act="passok" data-id="${tp.id}">Confirm paid</button>` : !tp ? `<button class="btn btn-ghost btn-sm" data-act="passgive" data-id="${r.id}">Record pass paid</button>` : ""}${!tp && lp ? `<span class="t2">Last: ${esc(lp.pass_date)}</span>` : ""}</div>`; })()}
         <div class="d-row">${r.approved === false ? `<button class="btn btn-green btn-sm" data-act="rapprove" data-id="${r.id}">Approve</button>` : ""}<input class="input d-input" id="rp-${r.id}" inputmode="numeric" maxlength="6" placeholder="New PIN" style="width:100px"><button class="btn btn-ghost btn-sm" data-act="rsetpin" data-id="${r.id}">Set PIN</button><button class="btn btn-ghost btn-sm" data-act="rtrust" data-id="${r.id}" data-v="${r.trusted ? 0 : 1}">${r.trusted ? "Remove trusted" : "Make trusted"}</button><button class="btn btn-ghost btn-sm" data-act="ractive" data-id="${r.id}" data-v="${r.active ? 0 : 1}">${r.active ? "Switch off" : "Switch on"}</button></div></div>`).join("")}</div>`;
+  } else if (D.tab === "operators") {
+    const ov = D.overview || [];
+    const fld = (id, k, l, v, extra = "") => `<div style="flex:1;min-width:140px"><label class="lbl">${l}</label><input class="input d-input" id="op-${k}-${id}" value="${esc(v ?? "")}" ${extra}></div>`;
+    body = `<div class="small">Each operator runs their own town under their own name. Pausing an operator, or letting the licence date pass, stops new orders on their app.</div>
+      <div class="d-order" style="margin-top:12px"><div class="sec">Add an operator</div>
+        <div class="d-row"><input class="input d-input" id="no-name" placeholder="Business name e.g. Kabwe Deli" style="flex:2;min-width:160px"><input class="input d-input" id="no-slug" placeholder="Short code e.g. kabwe" style="flex:1;min-width:120px"></div>
+        <div class="d-row"><input class="input d-input" id="no-phone" placeholder="Support phone" style="flex:1;min-width:130px"><input class="input d-input" id="no-host" placeholder="Web address e.g. kabwe.urunji.com" style="flex:2;min-width:180px"></div>
+        <div class="d-row"><label class="small">Main colour <input type="color" id="no-p" value="#1B6B35"></label><label class="small">Accent colour <input type="color" id="no-a" value="#F28C28"></label>
+          <select class="input d-input" id="no-plan" style="flex:1;min-width:110px"><option value="pilot">Pilot</option><option value="monthly">Monthly</option><option value="yearly">Yearly</option></select>
+          <div style="flex:1;min-width:150px"><label class="lbl">Licence paid until</label><input class="input d-input" type="date" id="no-lic"></div></div>
+        <input class="input d-input" id="no-staff" type="email" placeholder="First staff email (optional)">
+        <button class="btn btn-green btn-sm" data-act="opcreate">Create operator</button></div>
+      <div class="d-grid" style="margin-top:12px">${ov.map((o) => { const lic = o.licence_paid_until; const exp = lic && lic < todayLusaka();
+        return `<div class="d-order"><div class="d-row" style="justify-content:space-between"><b>${esc(o.name)} <span class="t2">(${esc(o.slug)})</span></b><span class="badge ${o.status === "active" && !exp ? "" : "o"}">${o.status !== "active" ? "Paused" : exp ? "Licence expired" : "Active"}</span></div>
+          <div class="t2">${o.orders_30d} orders (${o.delivered_30d} delivered) in 30 days · ${o.riders} riders · ${o.shops} shops · plan: ${esc(o.plan)}</div>
+          <div class="t2">Staff: ${esc((o.staff || []).join(", ") || "none yet")}</div>
+          <div class="d-row">${fld(o.id, "name", "Business name", o.name)}${fld(o.id, "phone", "Support phone", o.support_phone)}</div>
+          <div class="d-row">${fld(o.id, "host", "Web address", (o.hosts || [])[0] || "")}<div style="flex:1;min-width:140px"><label class="lbl">Licence paid until</label><input class="input d-input" type="date" id="op-lic-${o.id}" value="${esc(lic || "")}"></div></div>
+          <div class="d-row"><label class="small">Main colour <input type="color" id="op-p-${o.id}" value="${esc(o.primary_color)}"></label><label class="small">Accent <input type="color" id="op-a-${o.id}" value="${esc(o.accent_color)}"></label>
+            <div class="stile" style="width:48px;height:48px;background:#fff;border:1px solid var(--border)">${safeImg(o.logo_url) ? `<img src="${esc(safeImg(o.logo_url))}" alt="" style="object-fit:contain">` : `<span class="ini" style="font-size:18px">${esc(initials(o.name))}</span>`}</div>
+            <label class="btn btn-ghost btn-sm" style="cursor:pointer">${safeImg(o.logo_url) ? "Change logo" : "Add logo"}<input type="file" accept="image/*" data-file="oplogo" data-id="${o.id}" hidden></label></div>
+          <div class="d-row"><button class="btn btn-green btn-sm" data-act="opsave" data-id="${o.id}">Save details</button><button class="btn btn-ghost btn-sm" data-act="opstatus" data-id="${o.id}" data-v="${o.status === "active" ? "paused" : "active"}">${o.status === "active" ? "Pause operator" : "Resume operator"}</button><a class="btn btn-ghost btn-sm" href="?op=${esc(o.slug)}" target="_blank" rel="noopener">Open their app</a></div>
+          <div class="d-row"><input class="input d-input" id="op-staff-${o.id}" type="email" placeholder="Add staff email" style="flex:1;min-width:160px"><button class="btn btn-ghost btn-sm" data-act="opstaff" data-id="${o.id}">Add staff</button></div></div>`; }).join("") || '<div class="small">Loading…</div>'}</div>`;
   } else if (D.tab === "merchants") {
     const owedBy = {};
     D.owed.forEach((x) => { const e = owedBy[x.merchant_id] || (owedBy[x.merchant_id] = { n: 0, amt: 0, ids: [] }); e.n++; e.amt += Number(x.items_total) - Number(x.commission); e.ids.push(x.id); });
@@ -461,6 +484,8 @@ async function loadDispatch(keepFocus) {
     dispatch.ops = os.data;
     if (!os.data.some((x) => x.id === dispatch.op)) { dispatch.op = (os.data.find((x) => x.id === OP.id) || os.data[0]).id; store.set("dop", dispatch.op); }
   }
+  if (dispatch.isSuper === undefined) { try { dispatch.isSuper = !!(await rpc("deli_am_super")); } catch { dispatch.isSuper = false; } }
+  if (dispatch.isSuper && dispatch.tab === "operators") { try { dispatch.overview = (await rpc("deli_owner_overview")) || []; } catch (e) { toast(e.message); } }
   if (!dispatch.op) { toast("No operator found for this staff account."); return; }
   const eo = dispatch.op;
   const [o, r, s, cs, ps, ms, ow] = await Promise.all([
@@ -706,13 +731,13 @@ $app.addEventListener("input", (e) => {
   if (t.dataset.bindAcc) { account[t.dataset.bindAcc] = t.value; store.set("account", account); }
 });
 
-const shrink = (file, max = 700) => new Promise((ok, no) => {
+const shrink = (file, max = 700, type = "image/jpeg") => new Promise((ok, no) => {
   const url = URL.createObjectURL(file), im = new Image();
   im.onload = () => {
     const k = Math.min(1, max / Math.max(im.width, im.height)), c = document.createElement("canvas");
     c.width = Math.round(im.width * k); c.height = Math.round(im.height * k);
     c.getContext("2d").drawImage(im, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
-    c.toBlob((b) => (b ? ok(b) : no(new Error("Could not read this picture"))), "image/jpeg", 0.82);
+    c.toBlob((b) => (b ? ok(b) : no(new Error("Could not read this picture"))), type, 0.82);
   };
   im.onerror = () => { URL.revokeObjectURL(url); no(new Error("Could not read this picture. Try a JPG or PNG.")); };
   im.src = url;
@@ -721,6 +746,17 @@ $app.addEventListener("change", async (e) => {
   const t = e.target;
   if (t.dataset && t.dataset.bindAcc === "phone") checkCust();
   if (t.dataset && t.dataset.dop) { dispatch.op = t.value; store.set("dop", t.value); dispatch.orders = []; dispatch.riders = []; dispatch.customers = []; dispatch.passes = []; dispatch.merchants = []; dispatch.owed = []; dispatch.settings = {}; render(true); loadDispatch(); }
+  if (t.dataset && t.dataset.file === "oplogo" && t.files && t.files[0]) {
+    const id = t.dataset.id; toast("Uploading logo…");
+    try {
+      const blob = await shrink(t.files[0], 400, "image/png");
+      const path = id + "/logo-" + Date.now() + ".png";
+      const up = await sb.storage.from("deli-shops").upload(path, blob, { contentType: "image/png", upsert: true });
+      if (up.error) throw up.error;
+      await rpc("deli_owner_update_operator", { p_id: id, p_patch: { logo_url: sb.storage.from("deli-shops").getPublicUrl(path).data.publicUrl } });
+      toast("Logo saved"); loadDispatch();
+    } catch (err) { toast(err.message || "Upload failed"); }
+  }
   if (t.dataset && t.dataset.file === "mimg" && t.files && t.files[0]) {
     const id = t.dataset.id; toast("Uploading photo…");
     try {
@@ -883,7 +919,7 @@ $app.addEventListener("click", async (e) => {
     dispatch.session = data.session; render();
   }
   else if (a === "logout") { await sb.auth.signOut(); dispatch.session = null; render(); }
-  else if (a === "dtab") { dispatch.tab = v; render(true); }
+  else if (a === "dtab") { dispatch.tab = v; render(true); if (v === "operators") loadDispatch(); }
   else if (a === "refresh") loadDispatch();
   else if (a === "assign") {
     const rid = document.getElementById("rs-" + id).value; if (!rid) return toast("Choose a rider first");
@@ -941,6 +977,27 @@ $app.addEventListener("click", async (e) => {
     toast(pin ? "Shop added" : "Shop added. Set a PIN so the owner can sign in."); loadDispatch();
   }
   else if (a === "mapprove") { await sb.from("deli_merchants").update({ approved: true, active: true }).eq("id", id); toast("Shop approved"); loadDispatch(); }
+  else if (a === "opcreate") {
+    const g = (i) => document.getElementById(i).value.trim();
+    if (g("no-name").length < 2) return toast("Enter the business name");
+    if (!/^[a-z0-9-]{2,30}$/.test(g("no-slug").toLowerCase())) return toast("Short code: letters, numbers or dashes only");
+    try {
+      await rpc("deli_owner_create_operator", { p_slug: g("no-slug").toLowerCase(), p_name: g("no-name"), p_phone: g("no-phone"), p_host: g("no-host"), p_primary: g("no-p"), p_accent: g("no-a"), p_plan: g("no-plan"), p_licence: g("no-lic") || null, p_staff_email: g("no-staff") });
+      toast("Operator created"); loadDispatch();
+    } catch (err) { toast(err.message); }
+  }
+  else if (a === "opsave") {
+    const g = (k) => document.getElementById("op-" + k + "-" + id).value.trim();
+    try { await rpc("deli_owner_update_operator", { p_id: id, p_patch: { name: g("name"), support_phone: g("phone"), host: g("host"), licence_paid_until: g("lic") || null, primary_color: g("p"), accent_color: g("a") } }); toast("Saved"); loadDispatch(); } catch (err) { toast(err.message); }
+  }
+  else if (a === "opstatus") {
+    if (v === "paused" && !twice("ops" + id, "Tap again to pause this operator")) return;
+    try { await rpc("deli_owner_update_operator", { p_id: id, p_patch: { status: v } }); toast(v === "paused" ? "Operator paused" : "Operator resumed"); loadDispatch(); } catch (err) { toast(err.message); }
+  }
+  else if (a === "opstaff") {
+    const em = document.getElementById("op-staff-" + id).value.trim();
+    try { await rpc("deli_owner_add_staff", { p_op: id, p_email: em }); toast("Staff added. Make sure they have a login in Supabase Authentication."); loadDispatch(); } catch (err) { toast(err.message); }
+  }
   else if (a === "mimgdel") {
     if (!twice("mid" + id, "Tap again to remove the photo")) return;
     const { error } = await sb.from("deli_merchants").update({ image_url: null }).eq("id", id);
