@@ -85,6 +85,8 @@ let dispatch = { session: null, tab: "orders", orders: [], riders: [], customers
 let R = { token: store.get("rtoken", null), data: null, mode: "login" };
 let M = { token: store.get("mtoken", null), data: null, mode: "login", tab: "orders" };
 let A = { token: store.get("atoken", null), data: null, mode: "login", tab: "recruits" };
+let S = { choices: null };
+const ROLE = { rider: ["Rider", "#/rider"], merchant: ["Shop", "#/merchant"], agent: ["Agent", "#/agent"], staff: ["Staff", "#/dispatch"] };
 let shopsData = null, shopFilter = "all";
 const menuCache = {};
 let cart = Object.assign({ mid: null, name: "", lines: {}, dropoff: "", details: "", pay: "mtn" }, store.get("cart", {}));
@@ -160,7 +162,7 @@ function vShops() {
   return `<div class="screen"><div class="pad" style="padding-bottom:12px">${topbar("Shops")}
     <div class="chips nowrap">${cats.map(([k, n]) => `<button class="chip ${shopFilter === k ? "on" : ""}" data-act="shopcat" data-v="${k}">${n}</button>`).join("")}</div>
     ${shopsData === null ? `<div class="center-msg"><div class="spin"></div><div>Loading shops…</div></div>` : shown.length ? `<div class="shopgrid">${shown.map(shopTile).join("")}</div>` : `<div class="center-msg"><div class="t1">No shops here yet</div><div class="small">New shops are joining. Check back soon.</div></div>`}
-    <div class="card"><div class="t1">Own a shop?</div><div class="small">Grocery, cakes, shawarma, takeaways. Sell on ${esc(OP.name)} and we deliver for you.</div><a class="btn btn-ghost" href="#/merchant">Shop sign-in or sign-up</a></div>
+    <div class="card"><div class="t1">Own a shop?</div><div class="small">Grocery, cakes, shawarma, takeaways. Sell on ${esc(OP.name)} and we deliver for you.</div><a class="btn btn-ghost" href="#/join">Sell with us</a></div>
     ${powered}</div>${tabs("shops")}</div>`;
 }
 
@@ -361,16 +363,35 @@ function vHelp() {
     ${powered}</div>${tabs("help")}</div>`;
 }
 
+
+const signedIn = () => [R.token && "rider", M.token && "merchant", A.token && "agent", dispatch.session && "staff"].filter(Boolean);
+function vSignin() {
+  if (S.choices) return `<div class="screen"><div class="pad">${topbar("Sign in", "#/account")}<div class="note green">${ic("user", "#1B6B35")}<div>This phone number has more than one role. Where would you like to go?</div></div>
+    ${S.choices.map((k) => `<button class="btn btn-green" data-act="spick" data-v="${k}">${ROLE[k][0]} dashboard</button>`).join("")}</div></div>`;
+  return `<div class="screen"><div class="pad">${topbar("Sign in", "#/account")}
+    <div class="note green">${ic("user", "#1B6B35")}<div>Riders, shops, agents and staff all sign in here. We take you to the right place.</div></div>
+    <input class="input" id="uId" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Phone number or staff email">
+    <input class="input" id="uPw" type="password" inputmode="numeric" autocomplete="current-password" placeholder="PIN or password">
+    <button class="btn btn-green" data-act="signin">Sign in</button>
+    <a class="btn btn-ghost" href="#/join">New here? Join ${esc(OP.name)}</a></div></div>`;
+}
+function vJoin() {
+  const c = (t, d, v, b) => `<div class="card"><div class="t1">${t}</div><div class="small">${d}</div><button class="btn btn-green" data-act="join" data-v="${v}">${b}</button></div>`;
+  return `<div class="screen"><div class="pad">${topbar("Join " + OP.name, "#/account")}
+    ${c("Ride with us", "Deliver orders on your own bike and earn. We approve every rider.", "rider", "Become a rider")}
+    ${c("Sell with us", "Grocery, cakes, shawarma, takeaways. Customers order and our riders deliver.", "merchant", "Register my shop")}
+    ${c("Help us grow", "Register riders and shops in your town and earn a bonus for each one.", "agent", "Become an agent")}
+    <a class="small" style="text-align:center;color:var(--green);font-weight:700" href="#/signin">Already have an account? Sign in</a></div></div>`;
+}
+
 function vAccount() {
   return `<div class="screen"><div class="pad" style="padding-bottom:12px"><div class="h1">Account</div>
     <div class="small">Saved on this phone so you do not type them again.</div>
     <input class="input" data-bind-acc="name" placeholder="Your name" value="${esc(account.name)}">
     <input class="input" data-bind-acc="phone" inputmode="tel" placeholder="Phone number" value="${esc(account.phone)}">
     <button class="btn btn-green" data-act="saveacc">Save</button>
-    <a class="btn btn-ghost" href="#/rider">Rider sign-in</a>
-    <a class="btn btn-ghost" href="#/merchant">Shop sign-in</a>
-    <a class="btn btn-ghost" href="#/agent">Agent sign-in</a>
-    <a class="btn btn-ghost" href="#/dispatch">Staff sign-in</a>${powered}</div>${tabs("account")}</div>`;
+    ${signedIn().length ? `<div class="small" style="margin-top:6px">You are signed in as: <b>${signedIn().map((k) => ROLE[k][0]).join(", ")}</b></div>${signedIn().map((k) => `<a class="btn btn-green" href="${ROLE[k][1]}">Open my ${ROLE[k][0].toLowerCase()} dashboard</a>`).join("")}<button class="btn btn-ghost" data-act="signoutall">Sign out</button>` : '<a class="btn btn-ghost" href="#/signin">Sign in (riders, shops, agents, staff)</a>'}
+    <a class="btn btn-ghost" href="#/join">Join ${esc(OP.name)}</a>${powered}</div>${tabs("account")}</div>`;
 }
 
 /* ---------- staff dispatch ---------- */
@@ -779,10 +800,12 @@ async function render(soft) {
     case "shop": html = vShop(arg); if (!soft) loadMenu(arg); break;
     case "basket": html = vBasket(); if (!soft) checkCust(); break;
     case "merchant":
+      if (!M.token && M.mode !== "register") { location.hash = "#/signin"; return; }
       html = vMerchant();
       if (!soft && M.token) { loadMerchant(); timer = setInterval(() => loadMerchant(true), 8000); }
       break;
     case "agent":
+      if (!A.token && A.mode !== "register") { location.hash = "#/signin"; return; }
       html = vAgent();
       if (!soft && A.token) { loadAgent(); timer = setInterval(() => loadAgent(true), 15000); }
       break;
@@ -795,7 +818,10 @@ async function render(soft) {
     case "orders": return renderOrders(soft);
     case "help": html = vHelp(); break;
     case "account": html = vAccount(); break;
+    case "signin": html = vSignin(); break;
+    case "join": html = vJoin(); break;
     case "rider":
+      if (!R.token && R.mode !== "register") { location.hash = "#/signin"; return; }
       html = vRider();
       if (!soft && R.token) { loadRider(); timer = setInterval(() => loadRider(true), 8000); }
       break;
@@ -841,7 +867,9 @@ $app.addEventListener("input", (e) => {
   if (t.dataset.bind) { draft[t.dataset.bind] = t.value; saveDraft(); }
   if (t.dataset.bindCart) { cart[t.dataset.bindCart] = t.value; saveCart(); }
   if (t.dataset.bindAcc) { account[t.dataset.bindAcc] = t.value; store.set("account", account); }
+  if (t.id === "uId") { const pw = document.getElementById("uPw"); if (pw) pw.inputMode = /^[0-9+\s]*$/.test(t.value) ? "numeric" : "text"; }
 });
+$app.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.id === "uPw") { const b = $app.querySelector("[data-act=signin]"); if (b) b.click(); } });
 
 const shrink = (file, max = 700, type = "image/jpeg") => new Promise((ok, no) => {
   const url = URL.createObjectURL(file), im = new Image();
@@ -952,6 +980,39 @@ $app.addEventListener("click", async (e) => {
       location.hash = "#/track/" + r.code;
     } catch (err) { toast(err.message); el.disabled = false; el.textContent = "Place order · " + K(total); }
   }
+  /* one sign-in for everyone */
+  else if (a === "signin") {
+    const idv = document.getElementById("uId").value.trim(), pw = document.getElementById("uPw").value;
+    if (!idv || !pw) return toast("Enter your phone number or email, and your PIN or password");
+    el.disabled = true;
+    try {
+      if (idv.includes("@")) {
+        if (!sb) return toast("The app is not connected to its database yet.");
+        const { data, error } = await sb.auth.signInWithPassword({ email: idv, password: pw });
+        if (error) return toast("Wrong email or password");
+        dispatch.session = data.session; location.hash = "#/dispatch"; render();
+      } else {
+        const tries = [["rider", "deli_rider_login"], ["merchant", "deli_merchant_login"], ["agent", "deli_agent_login"]];
+        const rs = await Promise.all(tries.map(([k, fn]) => rpc(fn, { p_phone: idv, p_pin: pw, p_op: OP.id }).then((r) => ({ k, r })).catch((e) => ({ k, r: { error: e.message } }))));
+        const ok = rs.filter((x) => x.r && x.r.token);
+        if (!ok.length) { const msg = rs.map((x) => x.r && x.r.error).find((e) => e && e !== "Wrong phone or PIN"); return toast(msg || "Wrong phone or PIN"); }
+        ok.forEach(({ k, r }) => {
+          if (k === "rider") { R.token = r.token; store.set("rtoken", r.token); R.data = null; }
+          else if (k === "merchant") { M.token = r.token; store.set("mtoken", r.token); M.data = null; M.tab = "orders"; }
+          else { A.token = r.token; store.set("atoken", r.token); A.data = null; A.tab = "recruits"; }
+        });
+        if (ok.length === 1) { S.choices = null; location.hash = ROLE[ok[0].k][1]; render(); }
+        else { S.choices = ok.map((x) => x.k); render(); }
+      }
+    } catch (err) { toast(err.message); }
+    finally { el.disabled = false; }
+  }
+  else if (a === "spick") { S.choices = null; location.hash = ROLE[v][1]; render(); }
+  else if (a === "signoutall") {
+    R.token = null; R.data = null; store.set("rtoken", null); M.token = null; M.data = null; store.set("mtoken", null); A.token = null; A.data = null; store.set("atoken", null);
+    if (sb) { try { await sb.auth.signOut(); } catch {} } dispatch.session = null; S.choices = null; toast("Signed out"); render();
+  }
+  else if (a === "join") { ({ rider: R, merchant: M, agent: A })[v].mode = "register"; location.hash = ROLE[v][1]; render(); }
   /* agent */
   else if (a === "amode") { A.mode = v; render(true); }
   else if (a === "alogin") {
@@ -1090,7 +1151,7 @@ $app.addEventListener("click", async (e) => {
     if (error) return toast(error.message);
     dispatch.session = data.session; render();
   }
-  else if (a === "logout") { await sb.auth.signOut(); dispatch.session = null; render(); }
+  else if (a === "logout") { await sb.auth.signOut(); dispatch.session = null; location.hash = "#/signin"; render(); }
   else if (a === "dtab") { dispatch.tab = v; render(true); if (v === "operators" || v === "agents") loadDispatch(); }
   else if (a === "refresh") loadDispatch();
   else if (a === "assign") {
@@ -1218,3 +1279,4 @@ async function loadOperator() {
   applyBrand();
 }
 loadOperator().then(loadFees).finally(() => render());
+if (sb) { sb.auth.getSession().then(({ data }) => { if (data && data.session && !dispatch.session) { dispatch.session = data.session; if (location.hash.startsWith("#/account")) render(true); } }).catch(() => {}); }
