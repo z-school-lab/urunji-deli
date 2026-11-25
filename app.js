@@ -81,9 +81,10 @@ let draft = Object.assign(blankDraft(), store.get("draft", {}));
 let account = store.get("account", { name: "", phone: "" });
 let timer = null;
 let lastSig = "";
-let dispatch = { session: null, tab: "orders", orders: [], riders: [], customers: [], passes: [], merchants: [], owed: [], settings: {}, ops: [], op: store.get("dop", null), isSuper: undefined, overview: [], loading: false };
+let dispatch = { session: null, tab: "orders", orders: [], riders: [], customers: [], passes: [], merchants: [], owed: [], agents: [], agentList: [], settings: {}, ops: [], op: store.get("dop", null), isSuper: undefined, overview: [], loading: false };
 let R = { token: store.get("rtoken", null), data: null, mode: "login" };
 let M = { token: store.get("mtoken", null), data: null, mode: "login", tab: "orders" };
+let A = { token: store.get("atoken", null), data: null, mode: "login", tab: "recruits" };
 let shopsData = null, shopFilter = "all";
 const menuCache = {};
 let cart = Object.assign({ mid: null, name: "", lines: {}, dropoff: "", details: "", pay: "mtn" }, store.get("cart", {}));
@@ -368,6 +369,7 @@ function vAccount() {
     <button class="btn btn-green" data-act="saveacc">Save</button>
     <a class="btn btn-ghost" href="#/rider">Rider sign-in</a>
     <a class="btn btn-ghost" href="#/merchant">Shop sign-in</a>
+    <a class="btn btn-ghost" href="#/agent">Agent sign-in</a>
     <a class="btn btn-ghost" href="#/dispatch">Staff sign-in</a>${powered}</div>${tabs("account")}</div>`;
 }
 
@@ -379,7 +381,7 @@ function vDispatch() {
     <input class="input" id="sEmail" type="email" placeholder="Staff email" autocomplete="username">
     <input class="input" id="sPass" type="password" placeholder="Password" autocomplete="current-password">
     <button class="btn btn-green" data-act="login">Sign in</button></div></div>`;
-  const tabsHtml = ["orders", "customers", "riders", "merchants", "settings"].concat(D.isSuper ? ["operators"] : []).map((t) => `<button class="chip ${D.tab === t ? "on" : ""}" data-act="dtab" data-v="${t}">${t[0].toUpperCase() + t.slice(1)}</button>`).join("");
+  const tabsHtml = ["orders", "customers", "riders", "merchants", "agents", "settings"].concat(D.isSuper ? ["operators"] : []).map((t) => `<button class="chip ${D.tab === t ? "on" : ""}" data-act="dtab" data-v="${t}">${t[0].toUpperCase() + t.slice(1)}</button>`).join("");
   let body = "";
   if (D.tab === "orders") {
     const active = D.orders.filter((o) => !["delivered", "cancelled"].includes(o.status));
@@ -423,7 +425,7 @@ function vDispatch() {
   } else if (D.tab === "riders") {
     body = `<div class="d-order"><div class="sec">Add a rider</div><div class="d-row"><input class="input d-input" id="rN" placeholder="Name" style="flex:1;min-width:130px"><input class="input d-input" id="rP" placeholder="Phone" style="flex:1;min-width:130px"><input class="input d-input" id="rL" placeholder="Plate / bike" style="flex:1;min-width:110px"><input class="input d-input" id="rI" inputmode="numeric" maxlength="6" placeholder="Login PIN (4-6 digits)" style="flex:1;min-width:140px"></div>
       <label class="d-row small"><input type="checkbox" id="rT"> Trusted rider (can take errands and rides)</label><button class="btn btn-green btn-sm" data-act="addrider">Add rider</button></div>
-      <div class="d-grid" style="margin-top:12px">${D.riders.map((r) => `<div class="d-order"><div class="d-row" style="justify-content:space-between"><b>${esc(r.name)} ${r.trusted ? "★" : ""}</b><span class="badge ${r.approved === false ? "o" : r.active ? "" : "g"}">${r.approved === false ? "Waiting for approval" : r.active ? (r.online ? "Online" : "Active") : "Off"}</span></div><div class="t2">${esc(r.phone || "")} · ${esc(r.plate || "")}</div>
+      <div class="d-grid" style="margin-top:12px">${D.riders.map((r) => `<div class="d-order"><div class="d-row" style="justify-content:space-between"><b>${esc(r.name)} ${r.trusted ? "★" : ""}</b><span class="badge ${r.approved === false ? "o" : r.active ? "" : "g"}">${r.approved === false ? "Waiting for approval" : r.active ? (r.online ? "Online" : "Active") : "Off"}</span></div><div class="t2">${esc(r.phone || "")} · ${esc(r.plate || "")}${r.agent_id ? " · Recruited by " + esc(((D.agentList || []).find((g) => g.id === r.agent_id) || {}).name || "an agent") : ""}</div>
         ${(() => { const tp = D.passes.find((p) => p.rider_id === r.id && p.pass_date === todayLusaka()); const lp = D.passes.find((p) => p.rider_id === r.id && p.status === "confirmed"); return `<div class="d-row"><span class="badge ${tp && tp.status === "confirmed" ? "" : "o"}">${tp ? (tp.status === "confirmed" ? "Pass paid today" : "Pass waiting: ref " + esc(tp.ref)) : "No pass today"}</span>${tp && tp.status === "awaiting" ? `<button class="btn btn-green btn-sm" data-act="passok" data-id="${tp.id}">Confirm paid</button>` : !tp ? `<button class="btn btn-ghost btn-sm" data-act="passgive" data-id="${r.id}">Record pass paid</button>` : ""}${!tp && lp ? `<span class="t2">Last: ${esc(lp.pass_date)}</span>` : ""}</div>`; })()}
         <div class="d-row">${r.approved === false ? `<button class="btn btn-green btn-sm" data-act="rapprove" data-id="${r.id}">Approve</button>` : ""}<input class="input d-input" id="rp-${r.id}" inputmode="numeric" maxlength="6" placeholder="New PIN" style="width:100px"><button class="btn btn-ghost btn-sm" data-act="rsetpin" data-id="${r.id}">Set PIN</button><button class="btn btn-ghost btn-sm" data-act="rtrust" data-id="${r.id}" data-v="${r.trusted ? 0 : 1}">${r.trusted ? "Remove trusted" : "Make trusted"}</button><button class="btn btn-ghost btn-sm" data-act="ractive" data-id="${r.id}" data-v="${r.active ? 0 : 1}">${r.active ? "Switch off" : "Switch on"}</button></div></div>`).join("")}</div>`;
   } else if (D.tab === "operators") {
@@ -449,6 +451,24 @@ function vDispatch() {
             <label class="btn btn-ghost btn-sm" style="cursor:pointer">${safeImg(o.logo_url) ? "Change logo" : "Add logo"}<input type="file" accept="image/*" data-file="oplogo" data-id="${o.id}" hidden></label></div>
           <div class="d-row"><button class="btn btn-green btn-sm" data-act="opsave" data-id="${o.id}">Save details</button><button class="btn btn-ghost btn-sm" data-act="opstatus" data-id="${o.id}" data-v="${o.status === "active" ? "paused" : "active"}">${o.status === "active" ? "Pause operator" : "Resume operator"}</button><a class="btn btn-ghost btn-sm" href="?op=${esc(o.slug)}" target="_blank" rel="noopener">Open their app</a></div>
           <div class="d-row"><input class="input d-input" id="op-staff-${o.id}" type="email" placeholder="Add staff email" style="flex:1;min-width:160px"><button class="btn btn-ghost btn-sm" data-act="opstaff" data-id="${o.id}">Add staff</button></div></div>`; }).join("") || '<div class="small">Loading…</div>'}</div>`;
+  } else if (D.tab === "agents") {
+    const dt = (x) => (x ? new Date(x).toLocaleDateString("en-GB") : "");
+    body = `<div class="small">Agents register riders and shops for you. When a recruit has done real deliveries the agent earns a bonus. You pay the agent by mobile money, then tap <b>Record payout</b>.</div>
+      <div class="d-order" style="margin-top:12px"><div class="sec">Add an agent</div><div class="d-row"><input class="input d-input" id="gaN" placeholder="Name" style="flex:1;min-width:130px"><input class="input d-input" id="gaP" placeholder="Phone" style="flex:1;min-width:120px"></div>
+        <div class="d-row"><input class="input d-input" id="gaA" placeholder="Town / area" style="flex:1;min-width:120px"><input class="input d-input" id="gaI" inputmode="numeric" maxlength="6" placeholder="Login PIN (4-6 digits)" style="flex:1;min-width:140px"></div>
+        <div class="d-row"><input class="input d-input" id="gaR" inputmode="decimal" value="20" placeholder="Bonus per rider (K)" style="flex:1;min-width:130px"><input class="input d-input" id="gaS" inputmode="decimal" value="50" placeholder="Bonus per shop (K)" style="flex:1;min-width:130px"></div>
+        <button class="btn btn-green btn-sm" data-act="addagent">Add agent</button></div>
+      <div class="d-grid" style="margin-top:12px">${D.agents.map((g) => { const owed = Number(g.earned) - Number(g.paid); return `<div class="d-order"><div class="d-row" style="justify-content:space-between"><b>${esc(g.name)}</b><span class="badge ${g.approved === false ? "o" : g.active ? "" : "g"}">${g.approved === false ? "Waiting for approval" : g.active ? "Active" : "Off"}</span></div>
+        <div class="t2"><a href="tel:${esc(g.phone || "")}" style="color:var(--green);font-weight:700">${esc(g.phone || "")}</a> · ${esc(g.area || "")}</div>
+        <div class="t2">${g.terms_accepted_at ? "Accepted terms " + esc(g.terms_version) + " on " + dt(g.terms_accepted_at) : "Has not accepted the terms yet"}</div>
+        <div class="t2">Riders: ${g.riders}${g.riders_pending ? " (" + g.riders_pending + " waiting)" : ""} · Shops: ${g.shops}${g.shops_pending ? " (" + g.shops_pending + " waiting)" : ""}</div>
+        <div class="d-row"><span class="badge">Earned ${K(g.earned)}</span><span class="badge">Paid ${K(g.paid)}</span><span class="badge ${owed > 0 ? "o" : ""}">Owed ${K(owed)}</span></div>
+        ${owed > 0 ? `<div class="d-row"><input class="input d-input" id="gpa-${g.id}" inputmode="decimal" value="${owed}" style="width:90px"><input class="input d-input" id="gpn-${g.id}" placeholder="Note e.g. MTN ref" style="flex:1;min-width:110px"><button class="btn btn-orange btn-sm" data-act="gpaid" data-id="${g.id}">Record payout</button></div>` : ""}
+        <div class="d-row">${g.approved === false ? `<button class="btn btn-green btn-sm" data-act="gapprove" data-id="${g.id}">Approve</button>` : ""}<button class="btn btn-ghost btn-sm" data-act="gactive" data-id="${g.id}" data-v="${g.active ? 0 : 1}">${g.active ? "Switch off" : "Switch on"}</button></div>
+        <div class="d-row"><input class="input d-input" id="gp-${g.id}" inputmode="numeric" maxlength="6" placeholder="New PIN" style="width:110px"><button class="btn btn-ghost btn-sm" data-act="gpin" data-id="${g.id}">Set PIN</button></div>
+        <div class="d-row small"><span>Rider K</span><input class="input d-input" id="gr-${g.id}" inputmode="decimal" value="${esc(g.rider_bonus)}" style="width:64px"><span>after</span><input class="input d-input" id="grg-${g.id}" inputmode="numeric" value="${esc(g.rider_goal)}" style="width:52px"><span>jobs</span></div>
+        <div class="d-row small"><span>Shop K</span><input class="input d-input" id="gs-${g.id}" inputmode="decimal" value="${esc(g.shop_bonus)}" style="width:64px"><span>after</span><input class="input d-input" id="gsg-${g.id}" inputmode="numeric" value="${esc(g.shop_goal)}" style="width:52px"><span>orders</span><button class="btn btn-ghost btn-sm" data-act="grates" data-id="${g.id}">Save rates</button></div>
+        ${(g.credits || []).length ? `<div class="sec" style="margin-top:4px">Bonuses</div>${g.credits.map((c) => `<div class="rowline"><span>${c.kind === "rider" ? "Rider" : "Shop"}: ${esc(c.who || "")} · ${dt(c.created_at)}${c.voided ? " · cancelled" : ""}</span><span><b>${K(c.amount)}</b> ${c.voided ? "" : `<button class="btn btn-ghost btn-sm" style="color:#B3261E;border-color:#B3261E" data-act="gvoid" data-id="${c.id}">Cancel</button>`}</span></div>`).join("")}` : ""}</div>`; }).join("") || '<div class="small">No agents yet.</div>'}</div>`;
   } else if (D.tab === "merchants") {
     const owedBy = {};
     D.owed.forEach((x) => { const e = owedBy[x.merchant_id] || (owedBy[x.merchant_id] = { n: 0, amt: 0, ids: [] }); e.n++; e.amt += Number(x.items_total) - Number(x.commission); e.ids.push(x.id); });
@@ -458,7 +478,7 @@ function vDispatch() {
         <div class="d-row"><input class="input d-input" id="nmI" inputmode="numeric" maxlength="6" placeholder="Login PIN (4-6 digits)" style="flex:1;min-width:140px"><input class="input d-input" id="nmM" inputmode="decimal" value="10" placeholder="Commission %" style="flex:1;min-width:110px"></div>
         <label class="d-row small"><input type="checkbox" id="nmF"> Featured (shown first)</label><button class="btn btn-green btn-sm" data-act="addshop">Add shop</button></div>
       <div class="d-grid" style="margin-top:12px">${D.merchants.map((m) => { const ow = owedBy[m.id]; return `<div class="d-order"><div class="d-row" style="justify-content:space-between"><b>${esc(m.name)} ${m.featured ? "★" : ""}</b><span class="badge ${m.approved === false ? "o" : m.active ? "" : "g"}">${m.approved === false ? "Waiting for approval" : m.active ? (m.is_open ? "Open" : "Closed") : "Off"}</span></div>
-        <div class="t2">${esc((CAT[m.category] || CAT.other).name)} · <a href="tel:${esc(m.phone || "")}" style="color:var(--green);font-weight:700">${esc(m.phone || "")}</a> · ${esc(m.address || "")}</div>
+        <div class="t2">${esc((CAT[m.category] || CAT.other).name)} · <a href="tel:${esc(m.phone || "")}" style="color:var(--green);font-weight:700">${esc(m.phone || "")}</a> · ${esc(m.address || "")}${m.agent_id ? " · Recruited by " + esc(((D.agentList || []).find((g) => g.id === m.agent_id) || {}).name || "an agent") : ""}</div>
         <div class="d-row"><div class="stile" style="width:64px;height:64px;background:${(CAT[m.category] || CAT.other).bg};color:${(CAT[m.category] || CAT.other).fg}">${safeImg(m.image_url) ? `<img src="${esc(safeImg(m.image_url))}" alt="">` : ic((CAT[m.category] || CAT.other).icon, (CAT[m.category] || CAT.other).fg, 28)}</div>
           <label class="btn btn-ghost btn-sm" style="cursor:pointer">${safeImg(m.image_url) ? "Change photo" : "Add photo"}<input type="file" accept="image/*" data-file="mimg" data-id="${m.id}" hidden></label>${safeImg(m.image_url) ? `<button class="btn btn-ghost btn-sm" style="color:#B3261E;border-color:#B3261E" data-act="mimgdel" data-id="${m.id}">Remove photo</button>` : ""}</div>
         <div class="d-row"><span class="badge ${ow ? "o" : ""}">${ow ? "Owed to shop: " + K(ow.amt) + " (" + ow.n + " order" + (ow.n > 1 ? "s" : "") + ")" : "Nothing owed"}</span>${ow ? `<button class="btn btn-orange btn-sm" data-act="mpaid" data-id="${m.id}">Mark paid out</button>` : ""}</div>
@@ -488,17 +508,19 @@ async function loadDispatch(keepFocus) {
   if (dispatch.isSuper && dispatch.tab === "operators") { try { dispatch.overview = (await rpc("deli_owner_overview")) || []; } catch (e) { toast(e.message); } }
   if (!dispatch.op) { toast("No operator found for this staff account."); return; }
   const eo = dispatch.op;
-  const [o, r, s, cs, ps, ms, ow] = await Promise.all([
+  if (dispatch.tab === "agents") { try { dispatch.agents = (await rpc("deli_staff_agents", { p_op: eo })) || []; } catch (e) { toast(e.message); } }
+  const [o, r, s, cs, ps, ms, ag, ow] = await Promise.all([
     sb.from("deli_orders").select("*").eq("operator_id", eo).order("created_at", { ascending: false }).limit(80),
     sb.from("deli_riders").select("*").eq("operator_id", eo).order("name"),
     sb.from("deli_settings").select("*").eq("operator_id", eo),
     sb.from("deli_customers").select("*").eq("operator_id", eo).order("updated_at", { ascending: false }).limit(150),
     sb.from("deli_rider_passes").select("*").eq("operator_id", eo).order("created_at", { ascending: false }).limit(200),
     sb.from("deli_merchants").select("*").eq("operator_id", eo).order("created_at", { ascending: false }),
+    sb.from("deli_agents").select("id,name").eq("operator_id", eo),
     sb.from("deli_orders").select("id,merchant_id,items_total,commission").eq("operator_id", eo).eq("status", "delivered").eq("pay_status", "confirmed").eq("merchant_paid", false).not("merchant_id", "is", null),
   ]);
   if (o.error) { toast(o.error.message.includes("permission") || o.error.code === "42501" ? "This email is not on the staff list." : o.error.message); return; }
-  dispatch.orders = o.data || []; dispatch.riders = r.data || []; dispatch.customers = cs.data || []; dispatch.passes = ps.data || []; dispatch.merchants = ms.data || []; dispatch.owed = ow.data || [];
+  dispatch.orders = o.data || []; dispatch.riders = r.data || []; dispatch.customers = cs.data || []; dispatch.passes = ps.data || []; dispatch.merchants = ms.data || []; dispatch.owed = ow.data || []; dispatch.agentList = ag.data || [];
   dispatch.settings = Object.fromEntries((s.data || []).map((x) => [x.key, x.value]));
   render(true);
 }
@@ -637,6 +659,91 @@ async function loadMerchant(keepFocus) {
   } catch (e) { toast(e.message); }
   if (location.hash.startsWith("#/merchant")) render(true);
 }
+
+/* ---------- agent page ---------- */
+const AGENT_TERMS_VERSION = "v1";
+function agentTermsHtml() {
+  const me = A.data && A.data.me;
+  const rb = me ? K(me.rider_bonus) : "the rider bonus on your page";
+  const sb2 = me ? K(me.shop_bonus) : "the shop bonus on your page";
+  const rg = me ? me.rider_goal : 5, sg = me ? me.shop_goal : 3;
+  const T = [
+    ["Who you are", `You are an independent agent of ${OP.name}. You are not an employee, you have no salary, and you work your own hours. Either of us can end this at any time.`],
+    ["What you do", "You find honest riders and shops in your area, register them in this app with their agreement, and help them with their first days. You pass problems to our staff."],
+    ["How you earn", `You earn ${rb} for each rider you register once that rider is approved by us and has completed ${rg} real deliveries. You earn ${sb2} for each shop you register once it is approved and has ${sg} delivered orders. Your page shows what you have earned, what we have paid and what we still owe you. We pay by mobile money after we check. We may change the amounts for future recruits, and we will tell you first.`],
+    ["What does not count", "Orders placed by you, by the rider or shop themselves, or by their family. Fake or repeat orders made to collect a bonus. People who were already registered. Riders or shops we switch off for bad behaviour before they reach the goal. If we find cheating, we cancel the bonus, close your account and may report it to the police."],
+    ["Tell the truth", "Only register people you have met in person. Use their real name and phone number, and only with their permission. We may refuse or remove any recruit. Never promise people how much they will earn."],
+    ["PINs and privacy", "Let each person type their own PIN on your phone, then do not write it down or keep it. You cannot see customers' details and you must never ask riders or shops for them. Use the phone numbers you collect only for this work. Keep them private as the Zambian Data Protection Act requires."],
+    ["Money", `Never take or hold money for ${OP.name}. Never charge a rider or a shop to join. Riders pay their day pass only to our official numbers, and shops are paid by us.`],
+    ["How you behave", "Be polite and honest. Do not discriminate. You represent us in your town, so follow the rules in our rider and staff guides. If a rider or shop breaks them, tell our staff."],
+    ["Your recruits", "You are not responsible for what your recruits do, but we expect you to help us sort out problems with them."],
+    ["Ending", "If you stop, bonuses you have already earned are still paid. We can switch off your account if you break these terms."],
+    ["The law", "Zambian law applies to this agreement. These terms were written in plain language and may be updated. We will ask you to accept the new version."],
+  ];
+  return `<div class="d-order">${T.map((t, i) => `<div><b>${i + 1}. ${esc(t[0])}</b><div class="small" style="margin-top:2px">${esc(t[1])}</div></div>`).join("")}</div>`;
+}
+function vAgentTerms() {
+  return `<div class="screen"><div class="pad">${topbar("Agent terms", "#/agent")}<div class="small">Version ${AGENT_TERMS_VERSION}. Please read before you start.</div>${agentTermsHtml()}</div></div>`;
+}
+function vAgent() {
+  if (!A.token) {
+    const reg = A.mode === "register";
+    return `<div class="screen"><div class="pad">${topbar(reg ? "Become an agent" : "Agent sign-in", "#/account")}
+      <div class="note green">${ic("user", "#1B6B35")}<div>${reg ? "Help riders and shops join " + esc(OP.name) + " and earn a bonus for each one. We will call you to approve your account." : "Sign in with your phone number and PIN."}</div></div>
+      ${reg ? '<input class="input" id="aName" placeholder="Your full name" autocomplete="name">' : ""}
+      <input class="input" id="aPhone" inputmode="tel" placeholder="Phone number" autocomplete="tel">
+      ${reg ? '<input class="input" id="aArea" placeholder="Town or area you will work in">' : ""}
+      <input class="input" id="aPin" type="password" inputmode="numeric" maxlength="6" placeholder="${reg ? "Choose a PIN (4 to 6 digits)" : "Your PIN"}">
+      <button class="btn btn-green" data-act="${reg ? "aregister" : "alogin"}">${reg ? "Sign up" : "Sign in"}</button>
+      <button class="btn btn-ghost" data-act="amode" data-v="${reg ? "login" : "register"}">${reg ? "I already have an account" : "New agent? Sign up"}</button>
+      <a class="small" style="text-align:center;color:var(--green);font-weight:700" href="#/agentterms">Read the agent terms</a>
+    </div></div>`;
+  }
+  const d = A.data;
+  if (!d) return `<div class="screen"><div class="center-msg"><div class="spin"></div><div>Loading…</div></div></div>`;
+  const me = d.me;
+  const head = `<div class="hhead"><div class="brand"><div class="tile">${brandImg()}</div><b>Agent</b></div><div><div style="font-size:24px;font-weight:800">${esc(me.name)}</div><div style="opacity:.9;font-size:14px">${esc(me.area || "")}</div></div></div>`;
+  if (me.terms_version !== AGENT_TERMS_VERSION || !me.terms_accepted_at) {
+    return `<div class="screen">${head}<div class="pad" style="padding-top:18px"><div class="note orange"><div>Please read and accept the agent terms to start.</div></div>${agentTermsHtml()}
+      <button class="btn btn-green" data-act="aaccept">I have read and I agree</button><button class="btn btn-ghost" data-act="alogout">Sign out</button></div></div>`;
+  }
+  const rs = (x) => x.approved === false ? ["o", "Waiting for approval"] : x.active ? ["", "Active"] : ["g", "Switched off"];
+  const row = (x, goal, unit, extra) => { const st = rs(x); return `<div class="d-order"><div class="d-row" style="justify-content:space-between"><b>${esc(x.name)}</b><span class="badge ${st[0]}">${st[1]}</span></div><div class="t2">${esc(x.phone || "")}${extra ? " · " + esc(extra) : ""}</div>
+    ${x.credited ? '<div class="small"><b>Bonus earned</b></div>' : x.approved === false || !x.active ? "" : `<div class="bar"><i style="width:${Math.min(100, Math.round(x.jobs / goal * 100))}%"></i></div><div class="t2">${x.jobs} of ${goal} ${unit}</div>`}</div>`; };
+  const tabs3 = ["recruits", "add", "earnings"].map((t) => `<button class="chip ${A.tab === t ? "on" : ""}" data-act="atab" data-v="${t}">${{ recruits: "My recruits", add: "Register", earnings: "Earnings" }[t]}</button>`).join("");
+  let body = "";
+  if (A.tab === "recruits") {
+    body = `<div class="sec">Riders (${d.riders.length})</div>${d.riders.map((x) => row(x, me.rider_goal, "deliveries done", x.plate)).join("") || '<div class="small">No riders yet. Tap Register to add one.</div>'}
+      <div class="sec" style="margin-top:6px">Shops (${d.shops.length})</div>${d.shops.map((x) => row(x, me.shop_goal, "orders delivered", (CAT[x.category] || CAT.other).name)).join("") || '<div class="small">No shops yet.</div>'}`;
+  } else if (A.tab === "add") {
+    body = `<div class="note blue"><div>Only register people you have met. Hand them your phone so they type their own PIN. Do not keep it. We will call them to approve.</div></div>
+      <div class="d-order"><div class="sec">Register a rider</div>
+        <input class="input d-input" id="arN" placeholder="Rider full name"><input class="input d-input" id="arP" inputmode="tel" placeholder="Rider phone number"><input class="input d-input" id="arL" placeholder="Bike plate number (optional)">
+        <input class="input d-input" id="arI" type="password" inputmode="numeric" maxlength="6" placeholder="Rider's PIN (4 to 6 digits)"><button class="btn btn-green btn-sm" data-act="aaddrider">Register rider</button></div>
+      <div class="d-order"><div class="sec">Register a shop</div>
+        <input class="input d-input" id="asN" placeholder="Shop name"><input class="input d-input" id="asP" inputmode="tel" placeholder="Shop phone number">
+        <select class="input d-input" id="asC"><option value="grocery">Groceries</option><option value="bakery">Cakes &amp; bakery</option><option value="food">Food &amp; takeaways (shawarma, chicken...)</option><option value="other">Other</option></select>
+        <input class="input d-input" id="asA" placeholder="Shop address or landmark"><input class="input d-input" id="asI" type="password" inputmode="numeric" maxlength="6" placeholder="Shop's PIN (4 to 6 digits)"><button class="btn btn-green btn-sm" data-act="aaddshop">Register shop</button></div>`;
+  } else {
+    body = `<div class="d-order"><div class="sec">How you earn</div><div class="small">${K(me.rider_bonus)} for each rider who completes ${me.rider_goal} deliveries.<br>${K(me.shop_bonus)} for each shop with ${me.shop_goal} delivered orders.<br>Orders made by you, or by the rider or shop themselves, do not count.</div></div>
+      <div class="sec">Payments to you</div>${d.payouts.map((p) => `<div class="rowline"><span>${new Date(p.created_at).toLocaleDateString("en-GB")}${p.note ? " · " + esc(p.note) : ""}</span><b>${K(p.amount)}</b></div>`).join("") || '<div class="small">Nothing paid yet.</div>'}
+      <div class="small">Accepted the agent terms (${esc(me.terms_version)}) on ${new Date(me.terms_accepted_at).toLocaleDateString("en-GB")}. <a href="#/agentterms" style="color:var(--green);font-weight:700">Read them again</a></div>
+      <button class="btn btn-ghost" data-act="alogout">Sign out</button>`;
+  }
+  return `<div class="screen">${head}<div class="pad" style="padding-top:18px">
+    <div class="stat3"><div><span>Earned</span><b>${K(d.earned)}</b></div><div><span>Paid to you</span><b>${K(d.paid)}</b></div><div class="owed"><span>We owe you</span><b>${K(d.owed)}</b></div></div>
+    <div class="chips">${tabs3}</div>${body}</div></div>`;
+}
+async function loadAgent(keepFocus) {
+  if (!A.token) return;
+  if (keepFocus && $app.contains(document.activeElement) && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
+  try {
+    const d = await rpc("deli_agent_data", { p_token: A.token });
+    if (d && d.error) { A.token = null; A.data = null; store.set("atoken", null); toast("Please sign in again"); } else A.data = d;
+  } catch (e) { toast(e.message); }
+  if (location.hash.startsWith("#/agent")) render(true);
+}
+
 async function loadShops() {
   try { shopsData = (await rpc("deli_shops", { p_op: OP.id })) || []; } catch { shopsData = []; }
   if (/^#\/(home|shops)$/.test(location.hash)) render(true);
@@ -675,6 +782,11 @@ async function render(soft) {
       html = vMerchant();
       if (!soft && M.token) { loadMerchant(); timer = setInterval(() => loadMerchant(true), 8000); }
       break;
+    case "agent":
+      html = vAgent();
+      if (!soft && A.token) { loadAgent(); timer = setInterval(() => loadAgent(true), 15000); }
+      break;
+    case "agentterms": html = vAgentTerms(); break;
     case "delivery": case "errand": case "ride":
       if (draft.service !== route) { draft = Object.assign(blankDraft(), { service: route, pay_method: draft.pay_method || "mtn" }); saveDraft(); }
       html = vBook(route); break;
@@ -745,7 +857,7 @@ const shrink = (file, max = 700, type = "image/jpeg") => new Promise((ok, no) =>
 $app.addEventListener("change", async (e) => {
   const t = e.target;
   if (t.dataset && t.dataset.bindAcc === "phone") checkCust();
-  if (t.dataset && t.dataset.dop) { dispatch.op = t.value; store.set("dop", t.value); dispatch.orders = []; dispatch.riders = []; dispatch.customers = []; dispatch.passes = []; dispatch.merchants = []; dispatch.owed = []; dispatch.settings = {}; render(true); loadDispatch(); }
+  if (t.dataset && t.dataset.dop) { dispatch.op = t.value; store.set("dop", t.value); dispatch.orders = []; dispatch.riders = []; dispatch.customers = []; dispatch.passes = []; dispatch.merchants = []; dispatch.owed = []; dispatch.agents = []; dispatch.agentList = []; dispatch.settings = {}; render(true); loadDispatch(); }
   if (t.dataset && t.dataset.file === "oplogo" && t.files && t.files[0]) {
     const id = t.dataset.id; toast("Uploading logo…");
     try {
@@ -840,6 +952,66 @@ $app.addEventListener("click", async (e) => {
       location.hash = "#/track/" + r.code;
     } catch (err) { toast(err.message); el.disabled = false; el.textContent = "Place order · " + K(total); }
   }
+  /* agent */
+  else if (a === "amode") { A.mode = v; render(true); }
+  else if (a === "alogin") {
+    try {
+      const r = await rpc("deli_agent_login", { p_phone: document.getElementById("aPhone").value, p_pin: document.getElementById("aPin").value, p_op: OP.id });
+      if (r.error) return toast(r.error);
+      A.token = r.token; store.set("atoken", r.token); A.data = null; A.tab = "recruits"; render();
+    } catch (err) { toast(err.message); }
+  }
+  else if (a === "aregister") {
+    try {
+      await rpc("deli_agent_register", { p_name: document.getElementById("aName").value, p_phone: document.getElementById("aPhone").value, p_area: document.getElementById("aArea").value, p_pin: document.getElementById("aPin").value, p_op: OP.id });
+      A.mode = "login"; render(true); toast("Thanks! We will call you once your account is approved.");
+    } catch (err) { toast(err.message); }
+  }
+  else if (a === "alogout") { A.token = null; A.data = null; store.set("atoken", null); render(); }
+  else if (a === "atab") { A.tab = v; render(true); }
+  else if (a === "aaccept") { try { await rpc("deli_agent_accept_terms", { p_token: A.token, p_version: AGENT_TERMS_VERSION }); toast("Thank you. You can start now."); loadAgent(); } catch (err) { toast(err.message); } }
+  else if (a === "aaddrider") {
+    const g = (i) => document.getElementById(i);
+    try {
+      await rpc("deli_agent_add_rider", { p_token: A.token, p_name: g("arN").value, p_phone: g("arP").value, p_plate: g("arL").value, p_pin: g("arI").value });
+      ["arN", "arP", "arL", "arI"].forEach((i) => (g(i).value = "")); toast("Rider registered. We will call them to approve."); A.tab = "recruits"; loadAgent();
+    } catch (err) { toast(err.message); }
+  }
+  else if (a === "aaddshop") {
+    const g = (i) => document.getElementById(i);
+    try {
+      await rpc("deli_agent_add_shop", { p_token: A.token, p_name: g("asN").value, p_phone: g("asP").value, p_category: g("asC").value, p_address: g("asA").value, p_pin: g("asI").value });
+      ["asN", "asP", "asA", "asI"].forEach((i) => (g(i).value = "")); toast("Shop registered. We will call them to approve."); A.tab = "recruits"; loadAgent();
+    } catch (err) { toast(err.message); }
+  }
+  /* staff: agents */
+  else if (a === "addagent") {
+    const g = (i) => document.getElementById(i).value.trim();
+    if (g("gaN").length < 2) return toast("Enter the agent's name");
+    if (!/^[0-9]{4,6}$/.test(g("gaI"))) return toast("PIN must be 4 to 6 digits");
+    try { await rpc("deli_staff_add_agent", { p_op: dispatch.op, p_name: g("gaN"), p_phone: g("gaP"), p_area: g("gaA"), p_pin: g("gaI"), p_rider_bonus: Number(g("gaR") || 0), p_shop_bonus: Number(g("gaS") || 0) }); toast("Agent added. They accept the terms when they first sign in."); loadDispatch(); } catch (err) { toast(err.message); }
+  }
+  else if (a === "gapprove") { try { await rpc("deli_staff_update_agent", { p_id: id, p_patch: { approved: true, active: true } }); toast("Agent approved"); loadDispatch(); } catch (err) { toast(err.message); } }
+  else if (a === "gactive") { try { await rpc("deli_staff_update_agent", { p_id: id, p_patch: { active: v === "1" } }); loadDispatch(); } catch (err) { toast(err.message); } }
+  else if (a === "grates") {
+    const n = (i) => Number(document.getElementById(i + id).value);
+    try { await rpc("deli_staff_update_agent", { p_id: id, p_patch: { rider_bonus: n("gr-"), shop_bonus: n("gs-"), rider_goal: n("grg-"), shop_goal: n("gsg-") } }); toast("Saved. Applies to bonuses not yet earned."); loadDispatch(); } catch (err) { toast(err.message); }
+  }
+  else if (a === "gpin") {
+    const pin = (document.getElementById("gp-" + id).value || "").trim();
+    if (!/^[0-9]{4,6}$/.test(pin)) return toast("Type a PIN of 4 to 6 digits first");
+    try { await rpc("deli_staff_set_agent_pin", { p_agent: id, p_pin: pin }); document.getElementById("gp-" + id).value = ""; toast("PIN saved"); } catch (err) { toast(err.message); }
+  }
+  else if (a === "gpaid") {
+    const amt = Number(document.getElementById("gpa-" + id).value);
+    if (!(amt > 0)) return toast("Type the amount you paid first");
+    if (!twice("gpd" + id, "Tap again once you have paid the agent K" + amt)) return;
+    try { await rpc("deli_staff_agent_payout", { p_agent: id, p_amount: amt, p_note: document.getElementById("gpn-" + id).value }); toast("Payout recorded"); loadDispatch(); } catch (err) { toast(err.message); }
+  }
+  else if (a === "gvoid") {
+    if (!twice("gv" + id, "Tap again to cancel this bonus")) return;
+    try { await rpc("deli_staff_void_credit", { p_id: id }); toast("Bonus cancelled"); loadDispatch(); } catch (err) { toast(err.message); }
+  }
   /* merchant */
   else if (a === "mmode") { M.mode = v; render(true); }
   else if (a === "mlogin") {
@@ -919,7 +1091,7 @@ $app.addEventListener("click", async (e) => {
     dispatch.session = data.session; render();
   }
   else if (a === "logout") { await sb.auth.signOut(); dispatch.session = null; render(); }
-  else if (a === "dtab") { dispatch.tab = v; render(true); if (v === "operators") loadDispatch(); }
+  else if (a === "dtab") { dispatch.tab = v; render(true); if (v === "operators" || v === "agents") loadDispatch(); }
   else if (a === "refresh") loadDispatch();
   else if (a === "assign") {
     const rid = document.getElementById("rs-" + id).value; if (!rid) return toast("Choose a rider first");
