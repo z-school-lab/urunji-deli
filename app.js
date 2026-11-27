@@ -76,7 +76,7 @@ const ic = (n, c = "currentColor", s = 24) => `<svg width="${s}" height="${s}" v
 
 /* ---------- state ---------- */
 let fees = { delivery: 15, errand: 20, ride: 25, service: 3 };
-const blankDraft = () => ({ pickup: "", dropoff: "", item_type: "Parcel", item_size: "Small", details: "", budget: "", pay_method: "mtn" });
+const blankDraft = () => ({ pickup: "", dropoff: "", item_type: "Parcel", item_size: "Small", details: "", budget: "", pay_method: "cash", who: "sender", o_name: "", o_phone: "", payer: "sender", pay_when: "delivery" });
 let draft = Object.assign(blankDraft(), store.get("draft", {}));
 let account = store.get("account", { name: "", phone: "" });
 let timer = null;
@@ -193,16 +193,14 @@ function vBasket() {
     ${cust.blocked ? `<div class="note orange"><div><b>Sorry, we cannot take orders from this number right now.</b> Please call us on ${esc(OP.phone)}.</div></div>` : ""}
     <div class="t1">${esc(cart.name)}</div>
     <div class="card">${lines.map(([id, l]) => `<div class="item slim"><div class="grow"><div class="t1">${esc(l.name)}</div><div class="t2">${K(l.price)} each</div></div><div class="stepper"><button data-act="cartsub" data-id="${id}" data-mid="${cart.mid}" aria-label="Less">−</button><b>${l.qty}</b><button data-act="cartadd" data-id="${id}" data-mid="${cart.mid}" aria-label="More">+</button></div></div>`).join("")}
-      <div class="hr"></div><div class="rowline"><span>Items</span><b>${K(cartTotal())}</b></div><div class="rowline"><span>Delivery</span><b>${K(fee)}</b></div>${sf > 0 ? `<div class="rowline"><span>Service fee</span><b>${K(sf)}</b></div>` : ""}<div class="hr"></div><div class="total"><span>Total</span><span>${K(total)}</span></div></div>
+      <div class="hr"></div><div class="rowline"><span>Items (you pay the shop)</span><b>${K(cartTotal())}</b></div><div class="rowline"><span>Delivery (you pay the rider)</span><b>${K(fee)}</b></div>${sf > 0 ? `<div class="rowline"><span>Service fee</span><b>${K(sf)}</b></div>` : ""}<div class="hr"></div><div class="total"><span>Total</span><span>${K(total)}</span></div></div>
     <div class="sec">Where should we deliver?</div>
     <input class="input" data-bind-cart="dropoff" value="${esc(cart.dropoff)}" placeholder="Your place or landmark">
     <textarea class="input" rows="2" data-bind-cart="details" placeholder="Note for the rider (optional)">${esc(cart.details)}</textarea>
     <div class="sec">Your details</div>
     <input class="input" data-bind-acc="name" placeholder="Your name" value="${esc(account.name)}" autocomplete="name">
     <input class="input" data-bind-acc="phone" inputmode="tel" placeholder="Phone number e.g. 0977123456" value="${esc(account.phone)}" autocomplete="tel">
-    <div class="sec">Pay with mobile money</div>
-    ${["mtn", "airtel", "zamtel"].map((k) => `<label class="pm ${cart.pay === k ? "on" : ""}"><span class="ic">${k === "mtn" ? "M" : k === "airtel" ? "A" : "Z"}</span><span class="nm">${PAY_NAME[k]}</span><input type="radio" name="spm" data-act="shoppm" data-v="${k}" ${cart.pay === k ? "checked" : ""}></label>`).join("")}
-    <div class="small">After you order, we show you the number to send the money to. The shop starts preparing once your payment is confirmed.</div>
+    <div class="note blue"><div><b>How you pay</b><br>1. You pay the <b>shop</b> ${K(cartTotal())} by mobile money. After you order, we show you the shop's number.<br>2. You pay the <b>rider</b> ${K(fee + sf)} in cash when your order arrives.<br>The shop starts preparing once it has your money.</div></div>
     <div class="spacer"></div>
     <button class="btn btn-green" data-act="placeshop" id="placeShopBtn">Place order · ${K(total)}</button>
   </div></div>`;
@@ -236,7 +234,14 @@ function vBook(svc) {
   const pl = { delivery: ["Pick-up place", "Drop-off place"], errand: ["Where we start (your location)", "Where we deliver"], ride: ["Pick me up from", "Drop me at"] }[svc];
   let extra = "";
   if (svc === "delivery") {
-    extra = `<div class="sec">What are we carrying?</div>
+    const snd = d.who !== "receiver";
+    extra = `<div class="sec">Who are you?</div>
+      <div class="chips"><button class="chip ${snd ? "on" : ""}" data-act="who" data-v="sender">I am sending</button><button class="chip ${snd ? "" : "on"}" data-act="who" data-v="receiver">I am receiving</button></div>
+      <div class="sec">${snd ? "Who will receive it?" : "Who is sending it?"}</div>
+      <input class="input" data-bind="o_name" value="${esc(d.o_name)}" placeholder="${snd ? "Receiver's name" : "Sender's name"}" autocomplete="off">
+      <input class="input" data-bind="o_phone" inputmode="tel" value="${esc(d.o_phone)}" placeholder="${snd ? "Receiver's phone e.g. 0977123456" : "Sender's phone e.g. 0977123456"}" autocomplete="off">
+      <div class="small">${snd ? "We text the receiver the delivery code, and the rider calls them on arrival." : "The rider calls the sender when collecting the parcel."}</div>
+      <div class="sec">What are we carrying?</div>
       <div class="chips">${["Parcel", "Food", "Documents", "Other"].map((t) => `<button class="chip ${d.item_type === t ? "on" : ""}" data-act="item" data-v="${t}">${t}</button>`).join("")}</div>
       <div class="sec">Size</div>
       <div class="sizes">${[["Small", "fits a bag"], ["Medium", "a box"], ["Large", "needs space"]].map(([s, n]) => `<button class="size ${d.item_size === s ? "on" : ""}" data-act="size" data-v="${s}"><b>${s}</b><span>${n}</span></button>`).join("")}</div>
@@ -268,7 +273,10 @@ function vBook(svc) {
 function vPay() {
   const svc = draft.service || "delivery";
   const acc = account;
-  const m = ["mtn", "airtel", "zamtel", "cash"];
+  const del = svc === "delivery";
+  const rpay = del && draft.payer === "receiver";
+  if (rpay) draft.pay_method = "cash";
+  const m = rpay ? ["cash"] : ["mtn", "airtel", "zamtel", "cash"];
   const risk = money(svc) + (Number(String(draft.budget || "").replace(/[^0-9.]/g, "")) || 0);
   const cashOff = cust.limit !== null && (cust.limit === 0 || risk >= cust.limit);
   if (cashOff && draft.pay_method === "cash") draft.pay_method = "mtn";
@@ -279,10 +287,13 @@ function vPay() {
     <div class="sec">Your details</div>
     <input class="input" data-bind-acc="name" placeholder="Your name" value="${esc(acc.name)}" autocomplete="name">
     <input class="input" data-bind-acc="phone" inputmode="tel" placeholder="Phone number e.g. 0977123456" value="${esc(acc.phone)}" autocomplete="tel">
-    <div class="sec">How will you pay?</div>
+    ${del ? `<div class="sec">Who pays?</div>
+    <div class="chips"><button class="chip ${rpay ? "" : "on"}" data-act="payer" data-v="sender">The sender pays</button><button class="chip ${rpay ? "on" : ""}" data-act="payer" data-v="receiver">The receiver pays</button></div>` : ""}
+    <div class="sec">How ${rpay ? "will they pay?" : "will you pay?"}</div>
     ${m.map((k) => `<label class="pm ${draft.pay_method === k ? "on" : ""}" ${k === "cash" && cashOff ? 'style="opacity:.4"' : ""}><span class="ic">${k === "cash" ? "K" : k === "mtn" ? "M" : k === "airtel" ? "A" : "Z"}</span><span class="nm">${PAY_NAME[k]}</span><input type="radio" name="pm" data-act="pm" data-v="${k}" ${draft.pay_method === k ? "checked" : ""} ${k === "cash" && cashOff ? "disabled" : ""}></label>`).join("")}
     ${cashOff ? `<div class="note blue"><div>Cash is not available for this order. Please pay with mobile money. ${cust.limit ? "Cash is only for orders under " + K(cust.limit) + "." : ""}</div></div>` : ""}
-    <div class="small">${draft.pay_method === "cash" ? "Pay the rider in cash when your order is done." : "After you order, we show you the number to send the money to. We confirm your payment by hand."}</div>
+    ${del && !rpay && draft.pay_method === "cash" ? `<div class="chips"><button class="chip ${draft.pay_when === "pickup" ? "on" : ""}" data-act="paywhen" data-v="pickup">Pay at pick-up</button><button class="chip ${draft.pay_when !== "pickup" ? "on" : ""}" data-act="paywhen" data-v="delivery">Pay on delivery</button></div>` : ""}
+    <div class="small">${rpay ? "The receiver pays the rider in cash when the order arrives." : draft.pay_method === "cash" ? "Pay the rider in cash " + (del && draft.pay_when === "pickup" ? "when they collect the parcel." : "when your order is done.") : "After you order, we show you the number to send the money to. We confirm your payment by hand."}</div>
     <div class="spacer"></div>
     <button class="btn btn-green" data-act="place" id="placeBtn">Place order · ${K(money(svc))}</button>
   </div></div>`;
@@ -303,9 +314,15 @@ function vTrack(o) {
   const label = o.service === "ride" ? "Trip code" : "Delivery code";
   let payBox = "";
   if (o.status === "cancelled") payBox = `<div class="note orange"><div><b>This order was cancelled.</b></div></div>`;
+  else if (o.shop) {
+    const sp = o.shop, rider$ = Number(o.delivery_fee) + Number(o.service_fee);
+    payBox = (sp.paid ? `<div class="note green">${ic("check", "#1B6B35")}<div><b>${esc(sp.name)} has your payment.</b></div></div>`
+      : `<div class="note orange"><div>Pay <b>${esc(sp.name)}</b> <b>${K(o.items_total)}</b> by mobile money${sp.pay_network ? " (" + PAY_NAME[sp.pay_network] + ")" : ""} to <b>${esc(sp.pay_number || "")}</b>. The shop starts preparing once it has your money.<br><button class="btn btn-ghost btn-sm" data-act="copy" data-v="${esc(sp.pay_number || "")}">Copy number</button></div></div>`)
+      + (o.status !== "delivered" ? `<div class="note blue"><div>Pay the rider <b>${K(rider$)}</b> in cash for delivery.</div></div>` : "");
+  }
   else if (o.pay_status === "confirmed") payBox = `<div class="note green">${ic("check", "#1B6B35")}<div><b>Payment received.</b> Thank you!</div></div>`;
-  else if (o.pay_method === "cash") payBox = `<div class="note orange"><div>Please pay the rider <b>${K(total)}</b> in cash.</div></div>`;
-  else payBox = `<div class="note orange"><div>Send <b>${K(total)}</b> by ${PAY_NAME[o.pay_method]} to <b>${esc(o.pay_to || "the number we send you on WhatsApp")}</b>. Use reference <b>${esc(o.code)}</b>. We confirm it by hand.</div></div>`;
+  else if (o.pay_method === "cash") payBox = `<div class="note orange"><div>${o.payer === "receiver" ? "The receiver pays the rider" : "Please pay the rider"} <b>${K(total)}</b> in cash${o.payer === "receiver" ? " on delivery" : o.pay_when === "pickup" ? " at pick-up" : o.service === "delivery" ? " on delivery" : ""}.</div></div>`;
+  else payBox = `<div class="note orange"><div>Send <b>${K(total)}</b> by ${PAY_NAME[o.pay_method]} to <b>${esc(o.pay_to || "the number we give you on WhatsApp: " + OP.phone)}</b>. Use reference <b>${esc(o.code)}</b>. We confirm it by hand.${o.pay_to ? `<br><button class="btn btn-ghost btn-sm" data-act="copy" data-v="${esc(o.pay_to)}">Copy number</button>` : ""}</div></div>`;
   return `<div class="screen">
     <div class="map"><a class="back" href="#/orders" aria-label="Back">${ic("back", "#0B1F3A")}</a>
       <svg viewBox="0 0 430 300" preserveAspectRatio="xMidYMid slice"><rect width="430" height="300" fill="#E9EFE8"/>
@@ -322,7 +339,7 @@ function vTrack(o) {
       ${o.status !== "delivered" && o.status !== "cancelled" ? `<div class="codebox"><div><div class="t1">${label}</div><div class="small">When you get your ${o.service === "ride" ? "ride" : "order"}, tap the green button below, or give the rider this code.</div></div><div class="digits">${String(o.delivery_code).split("").map((d) => `<span>${d}</span>`).join("")}</div></div>` : ""}
       ${payBox}
       ${o.items && o.items.length ? `<div class="card">${o.items.map((i) => `<div class="rowline"><span>${i.qty} × ${esc(i.name)}</span><b>${K(i.qty * i.price)}</b></div>`).join("")}<div class="hr"></div><div class="rowline"><span>Items</span><b>${K(o.items_total)}</b></div><div class="rowline"><span>Delivery</span><b>${K(o.delivery_fee)}</b></div>${Number(o.service_fee) > 0 ? `<div class="rowline"><span>Service fee</span><b>${K(o.service_fee)}</b></div>` : ""}</div>` : ""}
-      <div class="card"><div class="rowline"><span>From</span><b>${esc(o.pickup)}</b></div><div class="rowline"><span>To</span><b>${esc(o.dropoff)}</b></div>${o.details ? `<div class="rowline"><span>Note</span><b>${esc(o.details)}</b></div>` : ""}</div>
+      <div class="card"><div class="rowline"><span>From</span><b>${esc(o.pickup)}</b></div><div class="rowline"><span>To</span><b>${esc(o.dropoff)}</b></div>${o.receiver_name ? `<div class="rowline"><span>Receiver</span><b>${esc(o.receiver_name)}</b></div>` : ""}${o.details ? `<div class="rowline"><span>Note</span><b>${esc(o.details)}</b></div>` : ""}</div>
       ${o.status === "picked_up" || o.status === "on_the_way" ? `<button class="btn btn-green" data-act="received" data-code="${esc(o.code)}">${o.service === "ride" ? "I have arrived safely" : "I have received my order"}</button>` : ""}
       ${o.status === "delivered" ? `<a class="btn btn-green" href="#/delivered/${esc(o.code)}">Rate your rider</a>` : ""}
       <a class="btn btn-ghost" href="https://wa.me/${intl(OP.phone)}?text=${encodeURIComponent("Hello " + OP.name + ", order " + o.code)}" target="_blank" rel="noopener">Need help? WhatsApp us</a>
@@ -416,11 +433,11 @@ function vDispatch() {
       const clabel = cst === "new" ? (cu && cu.completed >= 3 ? "Regular" : "New customer") : cst[0].toUpperCase() + cst.slice(1);
       return `<div class="d-order">${o.incident_level ? `<div class="note orange" style="border:2px solid #B3261E"><div><b style="color:#B3261E">${o.incident_level === "danger" ? "RIDER IN DANGER. Call them now." : "Rider reported a problem."}</b>${o.incident_note ? " " + esc(o.incident_note) : ""}${rider && rider.phone ? ` <a href="tel:${esc(rider.phone)}" style="color:#B3261E;font-weight:800">Call ${esc(rider.name)}</a>` : ""}<br><button class="btn btn-ghost btn-sm" data-act="clearinc" data-id="${o.id}">Clear alert</button></div></div>` : ""}<div class="d-row" style="justify-content:space-between"><b>${SVC[o.service]} · ${esc(o.code)}</b><span class="badge ${o.status === "delivered" ? "" : o.status === "cancelled" ? "g" : "o"}">${STATUS_TXT[o.status]}</span></div>
         <div class="t2">${esc(o.pickup)} → ${esc(o.dropoff)}</div>
-        ${o.merchant_id ? `<div class="note blue"><div><b>Shop order · ${esc((D.merchants.find((m) => m.id === o.merchant_id) || {}).name || "Shop")}</b> · ${MST[o.merchant_status] || ""}<br>${esc(itemsText(o.items))}<br>Items ${K(o.items_total)} + delivery ${K(Number(o.delivery_fee) + Number(o.service_fee))}. Shop gets ${K(Number(o.items_total) - Number(o.commission))}.</div></div>` : ""}
+        ${o.merchant_id ? `<div class="note blue"><div><b>Shop order · ${esc((D.merchants.find((m) => m.id === o.merchant_id) || {}).name || "Shop")}</b> · ${MST[o.merchant_status] || ""}<br>${esc(itemsText(o.items))}<br>Items ${K(o.items_total)} paid by the customer to the shop (${o.shop_paid_at ? "shop confirmed" : "not confirmed yet"}). Rider collects ${K(Number(o.delivery_fee) + Number(o.service_fee))} cash. Shop fee ${K(o.merchant_fee)} when delivered.</div></div>` : o.receiver_phone ? `<div class="note blue"><div><b>Sender:</b> ${esc(o.sender_name || "")} ${esc(o.sender_phone || "")}<br><b>Receiver:</b> ${esc(o.receiver_name || "")} ${esc(o.receiver_phone)}<br><b>${o.payer === "receiver" ? "Receiver pays" : "Sender pays"}</b> ${o.pay_method === "cash" ? "cash " + (o.payer === "receiver" || o.pay_when !== "pickup" ? "on delivery" : "at pick-up") : "by " + PAY_NAME[o.pay_method]}</div></div>` : ""}
         ${o.details ? `<div class="t2">Note: ${esc(o.details)}${o.budget ? " · Budget " + K(o.budget) : ""}</div>` : ""}
         <div class="t2">${esc(o.customer_name || "Customer")} · <a href="tel:${esc(o.customer_phone)}" style="color:var(--green);font-weight:700">${esc(o.customer_phone)}</a> · <a href="https://wa.me/${intl(o.customer_phone)}" target="_blank" rel="noopener" style="color:var(--green);font-weight:700">WhatsApp</a></div>
         <div class="d-row"><span class="badge ${cst === "trusted" ? "" : cst === "new" ? "o" : "g"}">${clabel} · ${cu ? cu.completed : 0} done${cu && cu.incidents ? " · " + cu.incidents + " incident" + (cu.incidents > 1 ? "s" : "") : ""}</span>${cst !== "blocked" ? `<button class="btn btn-ghost btn-sm" data-act="cset" data-id="${ck}" data-v="watch">Watch</button><button class="btn btn-ghost btn-sm" style="color:#B3261E;border-color:#B3261E" data-act="cset" data-id="${ck}" data-v="blocked">Block</button>` : ""}</div>
-        <div class="d-row"><span class="badge ${o.pay_status === "confirmed" ? "" : "o"}">${PAY_NAME[o.pay_method]}: ${o.pay_status}</span><b>${K(Number(o.delivery_fee) + Number(o.service_fee) + Number(o.items_total || 0))}</b>
+        <div class="d-row"><span class="badge ${o.pay_status === "confirmed" ? "" : "o"}">${PAY_NAME[o.pay_method]}: ${o.pay_status}</span><b>${K(Number(o.delivery_fee) + Number(o.service_fee) + (o.merchant_id ? 0 : Number(o.items_total || 0)))}</b>
           ${o.pay_status !== "confirmed" && o.status !== "cancelled" ? `<button class="btn btn-ghost btn-sm" data-act="confirmpay" data-id="${o.id}">Mark paid</button>` : ""}</div>
         ${isOpen ? `<div class="d-row"><select class="input" id="rs-${o.id}" style="flex:1"><option value="">${rider ? esc(rider.name) : "Choose rider"}</option>${trusted.map((r) => `<option value="${r.id}" ${r.id === o.rider_id ? "selected" : ""}>${esc(r.name)}${r.trusted ? " ★" : ""}</option>`).join("")}</select>
           <button class="btn btn-green btn-sm" data-act="assign" data-id="${o.id}">Assign</button></div>
@@ -491,25 +508,28 @@ function vDispatch() {
         <div class="d-row small"><span>Shop K</span><input class="input d-input" id="gs-${g.id}" inputmode="decimal" value="${esc(g.shop_bonus)}" style="width:64px"><span>after</span><input class="input d-input" id="gsg-${g.id}" inputmode="numeric" value="${esc(g.shop_goal)}" style="width:52px"><span>orders</span><button class="btn btn-ghost btn-sm" data-act="grates" data-id="${g.id}">Save rates</button></div>
         ${(g.credits || []).length ? `<div class="sec" style="margin-top:4px">Bonuses</div>${g.credits.map((c) => `<div class="rowline"><span>${c.kind === "rider" ? "Rider" : "Shop"}: ${esc(c.who || "")} · ${dt(c.created_at)}${c.voided ? " · cancelled" : ""}</span><span><b>${K(c.amount)}</b> ${c.voided ? "" : `<button class="btn btn-ghost btn-sm" style="color:#B3261E;border-color:#B3261E" data-act="gvoid" data-id="${c.id}">Cancel</button>`}</span></div>`).join("")}` : ""}</div>`; }).join("") || '<div class="small">No agents yet.</div>'}</div>`;
   } else if (D.tab === "merchants") {
-    const owedBy = {};
-    D.owed.forEach((x) => { const e = owedBy[x.merchant_id] || (owedBy[x.merchant_id] = { n: 0, amt: 0, ids: [] }); e.n++; e.amt += Number(x.items_total) - Number(x.commission); e.ids.push(x.id); });
-    body = `<div class="small">Customers pay ${esc(OP.name)}. After an order is delivered, you pay the shop its share (items minus commission) and tap <b>Mark paid out</b>.</div>
+    const billOf = {}; (D.bills || []).forEach((x) => { billOf[x.id] = x; });
+    body = `<div class="small">Customers pay the shop directly. Each delivered order adds ${K((D.settings.merchant_fee ?? 3))} to the shop's bill. When a shop pays you, tap <b>Record payment</b>. Shops that stay unpaid are hidden from customers automatically.</div>
       <div class="d-order" style="margin-top:12px"><div class="sec">Add a shop</div><div class="d-row"><input class="input d-input" id="nmN" placeholder="Shop name" style="flex:1;min-width:140px"><input class="input d-input" id="nmP" placeholder="Phone" style="flex:1;min-width:120px"></div>
         <div class="d-row"><select class="input d-input" id="nmC" style="flex:1"><option value="grocery">Groceries</option><option value="bakery">Cakes &amp; bakery</option><option value="food">Food &amp; takeaways</option><option value="other">Other</option></select><input class="input d-input" id="nmA" placeholder="Address / landmark" style="flex:2;min-width:140px"></div>
-        <div class="d-row"><input class="input d-input" id="nmI" inputmode="numeric" maxlength="6" placeholder="Login PIN (4-6 digits)" style="flex:1;min-width:140px"><input class="input d-input" id="nmM" inputmode="decimal" value="10" placeholder="Commission %" style="flex:1;min-width:110px"></div>
+        <div class="d-row"><input class="input d-input" id="nmI" inputmode="numeric" maxlength="6" placeholder="Login PIN (4-6 digits)" style="flex:1;min-width:140px"></div>
         <label class="d-row small"><input type="checkbox" id="nmF"> Featured (shown first)</label><button class="btn btn-green btn-sm" data-act="addshop">Add shop</button></div>
-      <div class="d-grid" style="margin-top:12px">${D.merchants.map((m) => { const ow = owedBy[m.id]; return `<div class="d-order"><div class="d-row" style="justify-content:space-between"><b>${esc(m.name)} ${m.featured ? "★" : ""}</b><span class="badge ${m.approved === false ? "o" : m.active ? "" : "g"}">${m.approved === false ? "Waiting for approval" : m.active ? (m.is_open ? "Open" : "Closed") : "Off"}</span></div>
+      <div class="d-grid" style="margin-top:12px">${D.merchants.map((m) => { const bo = billOf[m.id] || {}, bl = bo.bill || {}; return `<div class="d-order"><div class="d-row" style="justify-content:space-between"><b>${esc(m.name)} ${m.featured ? "★" : ""}</b><span class="badge ${m.approved === false ? "o" : m.active ? "" : "g"}">${m.approved === false ? "Waiting for approval" : m.active ? (m.is_open ? "Open" : "Closed") : "Off"}</span></div>
         <div class="t2">${esc((CAT[m.category] || CAT.other).name)} · <a href="tel:${esc(m.phone || "")}" style="color:var(--green);font-weight:700">${esc(m.phone || "")}</a> · ${esc(m.address || "")}${m.agent_id ? " · Recruited by " + esc(((D.agentList || []).find((g) => g.id === m.agent_id) || {}).name || "an agent") : ""}</div>
         <div class="d-row"><div class="stile" style="width:64px;height:64px;background:${(CAT[m.category] || CAT.other).bg};color:${(CAT[m.category] || CAT.other).fg}">${safeImg(m.image_url) ? `<img src="${esc(safeImg(m.image_url))}" alt="">` : ic((CAT[m.category] || CAT.other).icon, (CAT[m.category] || CAT.other).fg, 28)}</div>
           <label class="btn btn-ghost btn-sm" style="cursor:pointer">${safeImg(m.image_url) ? "Change photo" : "Add photo"}<input type="file" accept="image/*" data-file="mimg" data-id="${m.id}" hidden></label>${safeImg(m.image_url) ? `<button class="btn btn-ghost btn-sm" style="color:#B3261E;border-color:#B3261E" data-act="mimgdel" data-id="${m.id}">Remove photo</button>` : ""}</div>
-        <div class="d-row"><span class="badge ${ow ? "o" : ""}">${ow ? "Owed to shop: " + K(ow.amt) + " (" + ow.n + " order" + (ow.n > 1 ? "s" : "") + ")" : "Nothing owed"}</span>${ow ? `<button class="btn btn-orange btn-sm" data-act="mpaid" data-id="${m.id}">Mark paid out</button>` : ""}</div>
+        <div class="t2">Customers pay: ${esc(m.pay_number || m.phone || "")} ${m.pay_network ? "(" + esc(PAY_NAME[m.pay_network]) + ")" : ""}${m.pay_number ? "" : " (shop has not set a number)"}</div>
+        <div class="d-row"><span class="badge">${bl.orders || 0} delivered</span><span class="badge">Fees ${K(bl.fees)}</span><span class="badge">Paid ${K(bl.paid)}</span><span class="badge ${bl.owed > 0 ? "o" : ""}">Owes ${K(bl.owed)}</span>${bl.hidden ? '<span class="badge" style="background:#B3261E;color:#fff">Hidden: unpaid</span>' : bl.overdue > 0 ? '<span class="badge o">Overdue ' + K(bl.overdue) + "</span>" : ""}</div>
+        ${bl.owed > 0 ? `<div class="d-row"><input class="input d-input" id="mfa-${m.id}" inputmode="decimal" value="${esc(bl.owed)}" style="width:90px"><input class="input d-input" id="mfn-${m.id}" placeholder="Note e.g. MTN ref" style="flex:1;min-width:110px"><button class="btn btn-orange btn-sm" data-act="mfeepaid" data-id="${m.id}">Record payment</button></div>` : ""}
+        ${(bo.payments || []).length ? `<div class="small">${bo.payments.map((p) => `<div class="rowline"><span>${p.created_at ? new Date(p.created_at).toLocaleDateString("en-GB") : ""} · ${esc(p.note || "payment")}${p.voided ? " · cancelled" : ""}</span><span><b>${K(p.amount)}</b> ${p.voided ? "" : `<button class="btn btn-ghost btn-sm" style="color:#B3261E;border-color:#B3261E" data-act="mfeevoid" data-id="${p.id}">Cancel</button>`}</span></div>`).join("")}</div>` : ""}
         <div class="d-row">${m.approved === false ? `<button class="btn btn-green btn-sm" data-act="mapprove" data-id="${m.id}">Approve</button>` : ""}<button class="btn btn-ghost btn-sm" data-act="mfeat" data-id="${m.id}" data-v="${m.featured ? 0 : 1}">${m.featured ? "Unfeature" : "Feature"}</button><button class="btn btn-ghost btn-sm" data-act="mactive" data-id="${m.id}" data-v="${m.active ? 0 : 1}">${m.active ? "Switch off" : "Switch on"}</button></div>
-        <div class="d-row"><input class="input d-input" id="mc-${m.id}" inputmode="decimal" value="${esc(m.commission_pct)}" style="width:80px"><button class="btn btn-ghost btn-sm" data-act="mcomm" data-id="${m.id}">Save commission %</button></div>
         <div class="d-row"><input class="input d-input" id="mp-${m.id}" inputmode="numeric" maxlength="6" placeholder="New PIN" style="width:110px"><button class="btn btn-ghost btn-sm" data-act="mpin" data-id="${m.id}">Set PIN</button></div></div>`; }).join("") || '<div class="small">No shops yet.</div>'}</div>`;
   } else {
     const s = D.settings;
     const f = (k, l) => `<div><label class="lbl">${l}</label><input class="input d-input" id="st-${k}" value="${esc(s[k] ?? "")}"></div>`;
+    const g3 = (k, l, def) => `<div><label class="lbl">${l}</label><input class="input d-input" id="st-${k}" value="${esc(s[k] ?? def)}"></div>`;
     body = `<div class="d-order"><div class="sec">Prices (Kwacha)</div>${f("fee_delivery", "Delivery fee")}${f("fee_errand", "Errand fee")}${f("fee_ride", "Ride fare")}${f("fee_service", "Service fee")}${f("cash_limit_new", "Cash limit for new customers (K)")}${f("day_pass", "Rider day pass (K)")}
+      <div class="sec" style="margin-top:8px">Shop fee (paid by shops)</div>${g3("merchant_fee", "Fee per delivered order (K)", 3)}${g3("merchant_due_days", "Shop pays within (days)", 7)}${g3("merchant_grace_days", "Extra days before the shop is hidden", 3)}
       <div class="sec" style="margin-top:8px">Where customers send money</div>${f("pay_to_mtn", "MTN MoMo number")}${f("pay_to_airtel", "Airtel Money number")}${f("pay_to_zamtel", "Zamtel Kwacha number")}
       <button class="btn btn-green" data-act="savesettings">Save settings</button></div>`;
   }
@@ -529,8 +549,9 @@ async function loadDispatch(keepFocus) {
   if (dispatch.isSuper && dispatch.tab === "operators") { try { dispatch.overview = (await rpc("deli_owner_overview")) || []; } catch (e) { toast(e.message); } }
   if (!dispatch.op) { toast("No operator found for this staff account."); return; }
   const eo = dispatch.op;
+  if (dispatch.tab === "merchants") { try { dispatch.bills = (await rpc("deli_staff_merchant_bills", { p_op: eo })) || []; } catch (e) { toast(e.message); } }
   if (dispatch.tab === "agents") { try { dispatch.agents = (await rpc("deli_staff_agents", { p_op: eo })) || []; } catch (e) { toast(e.message); } }
-  const [o, r, s, cs, ps, ms, ag, ow] = await Promise.all([
+  const [o, r, s, cs, ps, ms, ag] = await Promise.all([
     sb.from("deli_orders").select("*").eq("operator_id", eo).order("created_at", { ascending: false }).limit(80),
     sb.from("deli_riders").select("*").eq("operator_id", eo).order("name"),
     sb.from("deli_settings").select("*").eq("operator_id", eo),
@@ -538,10 +559,9 @@ async function loadDispatch(keepFocus) {
     sb.from("deli_rider_passes").select("*").eq("operator_id", eo).order("created_at", { ascending: false }).limit(200),
     sb.from("deli_merchants").select("*").eq("operator_id", eo).order("created_at", { ascending: false }),
     sb.from("deli_agents").select("id,name").eq("operator_id", eo),
-    sb.from("deli_orders").select("id,merchant_id,items_total,commission").eq("operator_id", eo).eq("status", "delivered").eq("pay_status", "confirmed").eq("merchant_paid", false).not("merchant_id", "is", null),
   ]);
   if (o.error) { toast(o.error.message.includes("permission") || o.error.code === "42501" ? "This email is not on the staff list." : o.error.message); return; }
-  dispatch.orders = o.data || []; dispatch.riders = r.data || []; dispatch.customers = cs.data || []; dispatch.passes = ps.data || []; dispatch.merchants = ms.data || []; dispatch.owed = ow.data || []; dispatch.agentList = ag.data || [];
+  dispatch.orders = o.data || []; dispatch.riders = r.data || []; dispatch.customers = cs.data || []; dispatch.passes = ps.data || []; dispatch.merchants = ms.data || []; dispatch.agentList = ag.data || [];
   dispatch.settings = Object.fromEntries((s.data || []).map((x) => [x.key, x.value]));
   render(true);
 }
@@ -574,15 +594,18 @@ function vRider() {
     return `<div class="d-order"><div class="d-row" style="justify-content:space-between"><b>${SVC[o.service]} · ${esc(o.code)}</b><span class="badge o">${STATUS_TXT[o.status]}</span></div>
       ${o.incident ? `<div class="note orange"><div><b>${o.incident === "danger" ? "You reported danger. Staff have been told." : "Problem reported. Staff have been told."}</b></div></div>` : ""}
       ${o.cust === "watch" ? `<div class="note orange"><div><b>Watch customer.</b> Be careful. Deliver in a public place.</div></div>` : o.cust === "new" ? `<div class="note blue"><div><b>New customer</b> (${o.cust_done || 0} orders so far). Do not go into their house.</div></div>` : ""}
+      ${o.shop ? `<div class="note orange"><div><b>Collect ${K(o.total)} cash from the customer</b> on delivery. The shop was paid directly, do not take money for the items.</div></div>` : ""}
       ${o.hold ? `<div class="note orange"><div><b>Do not leave yet.</b> This customer has not paid. Staff must confirm payment first.</div></div>` : ""}
       ${o.shop ? `<div class="note blue"><div><b>Collect from ${esc(o.shop.name)}</b>${o.shop.address ? "<br>" + esc(o.shop.address) : ""}${o.shop.phone ? ` · <a href="tel:${esc(o.shop.phone)}" style="font-weight:800">Call shop</a>` : ""}<br>${esc(itemsText(o.items))}<br><b>${o.mstatus === "ready" ? "Order is READY. You can collect it." : "Shop is still preparing. Please wait."}</b></div></div>` : ""}
       <div class="t2"><b>From:</b> ${esc(o.pickup)}</div><div class="t2"><b>To:</b> ${esc(o.dropoff)}</div>
       ${o.details ? `<div class="t2"><b>Note:</b> ${esc(o.details)}${o.budget ? " · Items budget " + K(o.budget) : ""}</div>` : ""}
       ${o.item_type ? `<div class="t2">${esc(o.item_type)}${o.item_size ? " · " + esc(o.item_size) : ""}</div>` : ""}
-      <div class="d-row"><span class="badge ${o.pay_status === "confirmed" ? "" : "o"}">${o.pay_method === "cash" ? "Collect cash: " + K(o.total) : PAY_NAME[o.pay_method] + (o.pay_status === "confirmed" ? " paid" : " awaiting")}</span></div>
-      <div class="d-row"><a class="btn btn-ghost btn-sm" href="tel:${esc(o.customer_phone)}">Call ${esc(o.customer_name || "customer")}</a><a class="btn btn-ghost btn-sm" href="https://wa.me/${intl(o.customer_phone)}" target="_blank" rel="noopener">WhatsApp</a></div>
+      <div class="d-row"><span class="badge ${o.pay_status === "confirmed" ? "" : "o"}">${o.pay_method === "cash" ? "Collect cash: " + K(o.total) + (o.shop ? " (delivery only)" : o.payer ? " from the " + o.payer + (o.payer === "receiver" || o.pay_when !== "pickup" ? " on delivery" : " at pick-up") : "") : PAY_NAME[o.pay_method] + (o.pay_status === "confirmed" ? " paid" : " awaiting") + (o.pay_status === "confirmed" ? "" : o.pay_when === "pickup" ? "" : "")}</span></div>
+      ${o.receiver_phone ? `<div class="d-row small"><b>Sender:</b> ${esc(o.sender_name || "")} <a class="btn btn-ghost btn-sm" href="tel:${esc(o.sender_phone || "")}">Call ${esc(o.sender_phone || "")}</a></div>
+        <div class="d-row small"><b>Receiver:</b> ${esc(o.receiver_name || "")} <a class="btn btn-ghost btn-sm" href="tel:${esc(o.receiver_phone)}">Call ${esc(o.receiver_phone)}</a><a class="btn btn-ghost btn-sm" href="https://wa.me/${intl(o.receiver_phone)}" target="_blank" rel="noopener">WhatsApp</a></div>`
+      : `<div class="d-row"><a class="btn btn-ghost btn-sm" href="tel:${esc(o.customer_phone)}">Call ${esc(o.customer_name || "customer")}</a><a class="btn btn-ghost btn-sm" href="https://wa.me/${intl(o.customer_phone)}" target="_blank" rel="noopener">WhatsApp</a></div>`}
       ${next && !o.hold && !(o.shop && o.mstatus !== "ready") ? `<button class="btn btn-green" data-act="rdstage" data-id="${o.id}" data-v="${next[0]}">${next[1]}</button>` : ""}
-      ${o.status === "on_the_way" || o.status === "picked_up" ? `<div class="d-row"><input class="input d-input" id="rc-${o.id}" inputmode="numeric" maxlength="4" placeholder="Customer's 4-digit code" style="flex:1"><button class="btn btn-orange btn-sm" data-act="rdcomplete" data-id="${o.id}">Complete</button></div>` : ""}
+      ${o.status === "on_the_way" || o.status === "picked_up" ? `<div class="d-row"><input class="input d-input" id="rc-${o.id}" inputmode="numeric" maxlength="4" placeholder="${o.receiver_phone ? "Receiver's" : "Customer's"} 4-digit code" style="flex:1"><button class="btn btn-orange btn-sm" data-act="rdcomplete" data-id="${o.id}">Complete</button></div>` : ""}
       <div class="d-row"><input class="input d-input" id="rn-${o.id}" placeholder="What is the problem? (optional)" style="flex:1"></div>
       <div class="d-row"><button class="btn btn-ghost btn-sm" data-act="rdreport" data-id="${o.id}" data-v="problem">Problem with customer</button><button class="btn btn-sm" style="background:#B3261E;color:#fff" data-act="rdreport" data-id="${o.id}" data-v="danger">I am in danger</button></div>
     </div>`;
@@ -635,19 +658,26 @@ function vMerchant() {
     const live = d.orders.filter((o) => ["pending", "accepted", "ready"].includes(o.merchant_status) && o.status !== "cancelled" && !["picked_up", "on_the_way", "delivered"].includes(o.status));
     const past = d.orders.filter((o) => !live.includes(o)).slice(0, 15);
     const card = (o) => {
-      const get = Number(o.items_total) - Number(o.commission);
       const isLive = live.includes(o);
       return `<div class="d-order"><div class="d-row" style="justify-content:space-between"><b>Order ${esc(o.code)}</b><span class="badge ${o.merchant_status === "declined" || o.status === "cancelled" ? "g" : o.merchant_status === "pending" ? "o" : ""}">${o.status === "cancelled" ? "Cancelled" : o.status === "delivered" ? "Delivered" : o.status === "picked_up" || o.status === "on_the_way" ? "Collected" : MST[o.merchant_status] || ""}</span></div>
         ${(o.items || []).map((i) => `<div class="rowline"><span>${i.qty} × ${esc(i.name)}</span><b>${K(i.qty * i.price)}</b></div>`).join("")}
         ${o.details ? `<div class="t2">Note: ${esc(o.details)}</div>` : ""}
-        <div class="hr"></div><div class="rowline"><span>Items total</span><b>${K(o.items_total)}</b></div><div class="rowline"><span>Our commission</span><b>− ${K(o.commission)}</b></div><div class="total" style="font-size:16px"><span>You receive</span><span style="color:var(--green)">${K(get)}</span></div>
-        <div class="d-row"><span class="badge ${o.pay_status === "confirmed" ? "" : "o"}">${o.pay_status === "confirmed" ? "Customer has paid" : "Payment not confirmed yet"}</span>${o.rider ? `<span class="t2">Rider: ${esc(o.rider.name)}${o.rider.plate ? " · " + esc(o.rider.plate) : ""}</span>` : ""}</div>
-        ${isLive && o.merchant_status === "pending" ? `<div class="d-row"><button class="btn btn-green btn-sm" data-act="mact" data-id="${o.id}" data-v="accept">Accept order</button><button class="btn btn-ghost btn-sm" style="color:#B3261E;border-color:#B3261E" data-act="mact" data-id="${o.id}" data-v="decline">Decline</button></div>${o.needs_payment ? '<div class="small">You can accept once we confirm the customer has paid.</div>' : ""}` : ""}
+        <div class="hr"></div><div class="total" style="font-size:16px"><span>Customer pays you</span><span style="color:var(--green)">${K(o.items_total)}</span></div>
+        <div class="t2">${esc(o.customer_name || "Customer")} · <a href="tel:${esc(o.customer_phone || "")}" style="color:var(--green);font-weight:700">${esc(o.customer_phone || "")}</a></div>
+        <div class="d-row"><span class="badge ${o.shop_paid ? "" : "o"}">${o.shop_paid ? "You received the payment" : "Waiting for customer's payment"}</span>${o.rider ? `<span class="t2">Rider: ${esc(o.rider.name)}${o.rider.plate ? " · " + esc(o.rider.plate) : ""}</span>` : ""}</div>
+        ${isLive && o.merchant_status === "pending" ? (o.shop_paid ? `<div class="d-row"><button class="btn btn-green btn-sm" data-act="mact" data-id="${o.id}" data-v="accept">Accept order</button><button class="btn btn-ghost btn-sm" style="color:#B3261E;border-color:#B3261E" data-act="mact" data-id="${o.id}" data-v="decline">Decline</button></div>`
+          : `<div class="small">Check your mobile money for <b>${K(o.items_total)}</b> from ${esc(o.customer_name || "the customer")}. Only tap below once the money is in.</div><div class="d-row"><button class="btn btn-green btn-sm" data-act="mact" data-id="${o.id}" data-v="paid">Payment received</button><button class="btn btn-ghost btn-sm" style="color:#B3261E;border-color:#B3261E" data-act="mact" data-id="${o.id}" data-v="decline">Decline</button></div>`) : ""}
         ${isLive && o.merchant_status === "accepted" ? `<div class="d-row"><button class="btn btn-orange btn-sm" data-act="mact" data-id="${o.id}" data-v="ready">Order is ready</button><button class="btn btn-ghost btn-sm" style="color:#B3261E;border-color:#B3261E" data-act="mact" data-id="${o.id}" data-v="decline">Cancel order</button></div>` : ""}
         ${isLive && o.merchant_status === "ready" ? `<div class="small"><b>Ready.</b> A rider will come to collect it.</div>` : ""}
       </div>`;
     };
-    body = `<div class="sec">New and active (${live.length})</div>${live.map(card).join("") || '<div class="small">No orders right now. This page updates by itself.</div>'}
+    const bl = d.bill || {}, pt = d.pay_to || {};
+    const ptxt = ["mtn", "airtel", "zamtel"].filter((k) => pt[k]).map((k) => PAY_NAME[k] + " " + pt[k]).join(" · ") || "the number we give you";
+    const billBox = bl.hidden ? `<div class="note orange" style="border:2px solid #B3261E"><div><b style="color:#B3261E">Your shop is hidden from customers.</b> ${K(bl.overdue)} of our fees is unpaid. Pay to ${esc(ptxt)} (reference: ${esc(me.name)}). Your shop shows again once staff record your payment.</div></div>`
+      : bl.overdue > 0 ? `<div class="note orange"><div><b>${K(bl.overdue)} is due now.</b> Pay to ${esc(ptxt)} (reference: ${esc(me.name)}). If it stays unpaid for ${esc(bl.grace_days)} more days, your shop is hidden from customers.</div></div>`
+      : bl.owed > 0 ? `<div class="note blue"><div>Our fee so far: <b>${K(bl.owed)}</b> (${K(bl.rate)} per delivered order). Pay it within ${esc(bl.due_days)} days of each delivery to ${esc(ptxt)}, reference: ${esc(me.name)}.</div></div>` : "";
+    const noPay = !me.pay_number ? `<div class="note orange"><div><b>Add the number customers pay you on.</b> Open the <b>My shop</b> tab. Until you do, customers are shown your shop phone number.</div></div>` : "";
+    body = `${billBox}${noPay}<div class="sec">New and active (${live.length})</div>${live.map(card).join("") || '<div class="small">No orders right now. This page updates by itself.</div>'}
       <div class="sec" style="margin-top:6px">Earlier</div>${past.map(card).join("") || '<div class="small">Nothing yet.</div>'}`;
   } else if (M.tab === "menu") {
     body = `<div class="d-order"><div class="sec">Add an item</div>
@@ -661,7 +691,11 @@ function vMerchant() {
   } else {
     body = `<div class="d-order"><div class="sec">About your shop</div><label class="lbl">Address or landmark</label><input class="input d-input" id="msAddr" value="${esc(me.address || "")}"><label class="lbl">Short description</label><textarea class="input" id="msDesc" rows="3" placeholder="e.g. Fresh bread, cakes and cupcakes made daily">${esc(me.description || "")}</textarea>
       <button class="btn btn-green btn-sm" data-act="mshopsave">Save</button></div>
-      <div class="small">Our commission on items is ${esc(me.commission_pct)}%. We pay you the rest after each delivered order. Call us on ${esc(OP.phone)} to change your shop name, phone or photo.</div>
+      <div class="d-order"><div class="sec">Where customers pay you</div><div class="small">Customers pay you directly for their items. Enter the mobile money number they should send to.</div>
+        <input class="input d-input" id="msPay" inputmode="tel" placeholder="e.g. 0977123456" value="${esc(me.pay_number || "")}">
+        <select class="input d-input" id="msNet"><option value="">Which network?</option>${["mtn", "airtel", "zamtel"].map((k) => `<option value="${k}" ${me.pay_network === k ? "selected" : ""}>${PAY_NAME[k]}</option>`).join("")}</select>
+        <button class="btn btn-green btn-sm" data-act="mpaysave">Save number</button></div>
+      <div class="small">Our fee is ${K((d.bill || {}).rate)} for each delivered order. You keep all the money from your items. Call us on ${esc(OP.phone)} to change your shop name, phone or photo.</div>
       <button class="btn btn-ghost" data-act="mlogout">Sign out</button>`;
   }
   return `<div class="screen"><div class="hhead"><div class="brand"><div class="tile">${brandImg()}</div><b>Shop</b></div>
@@ -920,10 +954,19 @@ $app.addEventListener("click", async (e) => {
   else if (a === "item") { draft.item_type = v; saveDraft(); render(true); }
   else if (a === "size") { draft.item_size = v; saveDraft(); render(true); }
   else if (a === "pm") { draft.pay_method = v; saveDraft(); render(true); }
+  else if (a === "who") { draft.who = v; draft.payer = v; if (v === "receiver") draft.pay_method = "cash"; saveDraft(); render(true); }
+  else if (a === "payer") { draft.payer = v; if (v === "receiver") draft.pay_method = "cash"; saveDraft(); render(true); }
+  else if (a === "paywhen") { draft.pay_when = v; saveDraft(); render(true); }
+  else if (a === "copy") { try { await navigator.clipboard.writeText(v); toast("Number copied"); } catch { toast(v); } }
   else if (a === "topay") {
     const svc = el.dataset.svc;
     if (draft.pickup.trim().length < 2 || draft.dropoff.trim().length < 2) return toast("Please fill in both places");
     if (svc === "errand" && draft.details.trim().length < 3) return toast("Please say what we should get");
+    if (svc === "delivery") {
+      const rcv = draft.who === "receiver";
+      if (draft.o_phone.replace(/\D/g, "").length < 9) return toast(rcv ? "Please enter the sender's phone number" : "Please enter the receiver's phone number");
+      if (!rcv && draft.o_name.trim().length < 2) return toast("Please enter the receiver's name");
+    }
     draft.service = svc; saveDraft(); location.hash = "#/pay";
   }
   else if (a === "place") {
@@ -938,6 +981,10 @@ $app.addEventListener("click", async (e) => {
         p_item_type: svc === "delivery" ? draft.item_type : null, p_item_size: svc === "delivery" ? draft.item_size : null,
         p_details: draft.details || null, p_budget: draft.budget ? Number(String(draft.budget).replace(/[^0-9.]/g, "")) || null : null,
         p_pay_method: draft.pay_method, p_op: OP.id,
+        ...(svc === "delivery" ? (() => { const rcv = draft.who === "receiver";
+          const mine = { n: account.name, p: account.phone }, other = { n: draft.o_name, p: draft.o_phone };
+          const s2 = rcv ? other : mine, r2 = rcv ? mine : other;
+          return { p_sender_name: s2.n || null, p_sender_phone: s2.p, p_receiver_name: r2.n || null, p_receiver_phone: r2.p, p_payer: draft.payer, p_pay_when: draft.pay_method === "cash" ? draft.pay_when : "pickup" }; })() : {}),
       });
       addOrder(r.code, svc);
       const keep = draft.pay_method; draft = Object.assign(blankDraft(), { pay_method: keep }); saveDraft();
@@ -1093,7 +1140,7 @@ $app.addEventListener("click", async (e) => {
   else if (a === "mopen") { try { await rpc("deli_merchant_set_open", { p_token: M.token, p_open: v === "1" }); toast(v === "1" ? "Shop is open" : "Shop is closed"); loadMerchant(); } catch (err) { toast(err.message); } }
   else if (a === "mact") {
     if (v === "decline" && !twice("md" + id, "Tap again to decline this order")) return;
-    try { const ok = await rpc("deli_merchant_order_action", { p_token: M.token, p_id: id, p_action: v }); toast(ok ? (v === "accept" ? "Order accepted" : v === "ready" ? "Marked ready" : "Order declined") : "Sorry, that did not work"); loadMerchant(); } catch (err) { toast(err.message); loadMerchant(); }
+    try { const ok = await rpc("deli_merchant_order_action", { p_token: M.token, p_id: id, p_action: v }); toast(ok ? (v === "accept" ? "Order accepted" : v === "paid" ? "Payment noted. You can accept the order now." : v === "ready" ? "Marked ready" : "Order declined") : "Sorry, that did not work"); loadMerchant(); } catch (err) { toast(err.message); loadMerchant(); }
   }
   else if (a === "mitemadd") {
     const name = document.getElementById("niN").value.trim(), price = Number(document.getElementById("niP").value);
@@ -1109,6 +1156,11 @@ $app.addEventListener("click", async (e) => {
   else if (a === "mitemdel") {
     if (!twice("mi" + id, "Tap Delete again to remove this item")) return;
     try { await rpc("deli_merchant_item_delete", { p_token: M.token, p_id: id }); toast("Deleted"); loadMerchant(); } catch (err) { toast(err.message); }
+  }
+  else if (a === "mpaysave") {
+    const num = document.getElementById("msPay").value.trim(), net = document.getElementById("msNet").value;
+    if (!net) return toast("Please choose the network");
+    try { await rpc("deli_merchant_set_pay", { p_token: M.token, p_number: num, p_network: net }); toast("Saved"); loadMerchant(); } catch (err) { toast(err.message); }
   }
   else if (a === "mshopsave") {
     try { await rpc("deli_merchant_profile", { p_token: M.token, p_description: document.getElementById("msDesc").value, p_address: document.getElementById("msAddr").value }); toast("Saved"); loadMerchant(); } catch (err) { toast(err.message); }
@@ -1152,7 +1204,7 @@ $app.addEventListener("click", async (e) => {
     dispatch.session = data.session; render();
   }
   else if (a === "logout") { await sb.auth.signOut(); dispatch.session = null; location.hash = "#/signin"; render(); }
-  else if (a === "dtab") { dispatch.tab = v; render(true); if (v === "operators" || v === "agents") loadDispatch(); }
+  else if (a === "dtab") { dispatch.tab = v; render(true); if (v === "operators" || v === "agents" || v === "merchants") loadDispatch(); }
   else if (a === "refresh") loadDispatch();
   else if (a === "assign") {
     const rid = document.getElementById("rs-" + id).value; if (!rid) return toast("Choose a rider first");
@@ -1203,8 +1255,7 @@ $app.addEventListener("click", async (e) => {
   else if (a === "addshop") {
     const name = document.getElementById("nmN").value.trim(); if (name.length < 2) return toast("Enter the shop name");
     const pin = document.getElementById("nmI").value.trim(); if (pin && !/^[0-9]{4,6}$/.test(pin)) return toast("PIN must be 4 to 6 digits");
-    const pct = Number(document.getElementById("nmM").value); if (!(pct >= 0 && pct <= 50)) return toast("Commission must be 0 to 50");
-    const { data: nm, error } = await sb.from("deli_merchants").insert({ operator_id: dispatch.op, name, phone: document.getElementById("nmP").value.trim(), category: document.getElementById("nmC").value, address: document.getElementById("nmA").value.trim(), commission_pct: pct, featured: document.getElementById("nmF").checked, approved: true }).select().single();
+    const { data: nm, error } = await sb.from("deli_merchants").insert({ operator_id: dispatch.op, name, phone: document.getElementById("nmP").value.trim(), category: document.getElementById("nmC").value, address: document.getElementById("nmA").value.trim(), featured: document.getElementById("nmF").checked, approved: true }).select().single();
     if (error) return toast(error.message);
     if (pin) { try { await rpc("deli_staff_set_merchant_pin", { p_merchant: nm.id, p_pin: pin }); } catch (err) { toast(err.message); } }
     toast(pin ? "Shop added" : "Shop added. Set a PIN so the owner can sign in."); loadDispatch();
@@ -1238,27 +1289,27 @@ $app.addEventListener("click", async (e) => {
   }
   else if (a === "mfeat") { await sb.from("deli_merchants").update({ featured: v === "1" }).eq("id", id); loadDispatch(); }
   else if (a === "mactive") { await sb.from("deli_merchants").update({ active: v === "1" }).eq("id", id); loadDispatch(); }
-  else if (a === "mcomm") {
-    const pct = Number(document.getElementById("mc-" + id).value); if (!(pct >= 0 && pct <= 50)) return toast("Commission must be 0 to 50");
-    const { error } = await sb.from("deli_merchants").update({ commission_pct: pct }).eq("id", id); error ? toast(error.message) : (toast("Saved. Applies to new orders."), loadDispatch());
-  }
   else if (a === "mpin") {
     const pin = (document.getElementById("mp-" + id).value || "").trim();
     if (!/^[0-9]{4,6}$/.test(pin)) return toast("Type a PIN of 4 to 6 digits first");
     try { await rpc("deli_staff_set_merchant_pin", { p_merchant: id, p_pin: pin }); document.getElementById("mp-" + id).value = ""; toast("PIN saved"); } catch (err) { toast(err.message); }
   }
-  else if (a === "mpaid") {
-    if (!twice("mpd" + id, "Tap again once you have paid the shop")) return;
-    const ids = dispatch.owed.filter((x) => x.merchant_id === id).map((x) => x.id);
-    const { error } = await sb.from("deli_orders").update({ merchant_paid: true }).in("id", ids);
-    error ? toast(error.message) : (toast("Marked as paid out"), loadDispatch());
+  else if (a === "mfeepaid") {
+    const amt = Number(document.getElementById("mfa-" + id).value);
+    if (!(amt > 0)) return toast("Enter the amount the shop paid");
+    if (!twice("mfp" + id, "Tap again to record this payment")) return;
+    try { await rpc("deli_staff_merchant_payment", { p_merchant: id, p_amount: amt, p_note: document.getElementById("mfn-" + id).value.trim() || null }); toast("Payment recorded"); shopsData = null; loadDispatch(); } catch (err) { toast(err.message); }
+  }
+  else if (a === "mfeevoid") {
+    if (!twice("mfv" + id, "Tap again to cancel this payment")) return;
+    try { await rpc("deli_staff_void_merchant_payment", { p_id: id }); toast("Payment cancelled"); shopsData = null; loadDispatch(); } catch (err) { toast(err.message); }
   }
   else if (a === "rtrust") { await sb.from("deli_riders").update({ trusted: v === "1" }).eq("id", id); loadDispatch(); }
   else if (a === "ractive") { await sb.from("deli_riders").update({ active: v === "1" }).eq("id", id); loadDispatch(); }
   else if (a === "savesettings") {
-    const keys = ["fee_delivery", "fee_errand", "fee_ride", "fee_service", "cash_limit_new", "day_pass", "pay_to_mtn", "pay_to_airtel", "pay_to_zamtel"];
+    const keys = ["fee_delivery", "fee_errand", "fee_ride", "fee_service", "cash_limit_new", "day_pass", "merchant_fee", "merchant_due_days", "merchant_grace_days", "pay_to_mtn", "pay_to_airtel", "pay_to_zamtel"];
     const rows = keys.map((k) => ({ operator_id: dispatch.op, key: k, value: document.getElementById("st-" + k).value.trim() }));
-    for (const r of rows.slice(0, 6)) if (!(Number(r.value) >= 0) || r.value === "") return toast("Prices must be numbers");
+    for (const r of rows.slice(0, 9)) if (!(Number(r.value) >= 0) || r.value === "") return toast("Prices and days must be numbers");
     const { error } = await sb.from("deli_settings").upsert(rows, { onConflict: "operator_id,key" });
     error ? toast(error.message) : (toast("Saved"), loadFees(), loadDispatch());
   }
