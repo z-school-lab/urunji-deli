@@ -88,6 +88,9 @@ let A = { token: store.get("atoken", null), data: null, mode: "login", tab: "rec
 let S = { choices: null };
 const ROLE = { rider: ["Rider", "#/rider"], merchant: ["Shop", "#/merchant"], agent: ["Agent", "#/agent"], staff: ["Staff", "#/dispatch"] };
 let shopsData = null, shopFilter = "all";
+let placesList = store.get("places", []);
+const placesDL = () => `<datalist id="placesDL">${placesList.map((p) => `<option value="${esc(p.name)}"></option>`).join("")}</datalist>`;
+const knownPlace = (x) => placesList.some((p) => p.name.toLowerCase() === String(x || "").trim().toLowerCase());
 const menuCache = {};
 let cart = Object.assign({ mid: null, name: "", lines: {}, dropoff: "", details: "", pay: "mtn" }, store.get("cart", {}));
 const saveCart = () => store.set("cart", cart);
@@ -195,7 +198,7 @@ function vBasket() {
     <div class="card">${lines.map(([id, l]) => `<div class="item slim"><div class="grow"><div class="t1">${esc(l.name)}</div><div class="t2">${K(l.price)} each</div></div><div class="stepper"><button data-act="cartsub" data-id="${id}" data-mid="${cart.mid}" aria-label="Less">−</button><b>${l.qty}</b><button data-act="cartadd" data-id="${id}" data-mid="${cart.mid}" aria-label="More">+</button></div></div>`).join("")}
       <div class="hr"></div><div class="rowline"><span>Items (you pay the shop)</span><b>${K(cartTotal())}</b></div><div class="rowline"><span>Delivery (you pay the rider)</span><b>${K(fee)}</b></div>${sf > 0 ? `<div class="rowline"><span>Service fee</span><b>${K(sf)}</b></div>` : ""}<div class="hr"></div><div class="total"><span>Total</span><span>${K(total)}</span></div></div>
     <div class="sec">Where should we deliver?</div>
-    <input class="input" data-bind-cart="dropoff" value="${esc(cart.dropoff)}" placeholder="Your place or landmark">
+    <input class="input" data-bind-cart="dropoff" list="placesDL" value="${esc(cart.dropoff)}" placeholder="Your place or landmark" autocomplete="off">${placesDL()}
     <textarea class="input" rows="2" data-bind-cart="details" placeholder="Note for the rider (optional)">${esc(cart.details)}</textarea>
     <div class="sec">Your details</div>
     <input class="input" data-bind-acc="name" placeholder="Your name" value="${esc(account.name)}" autocomplete="name">
@@ -240,6 +243,7 @@ function vBook(svc) {
       <div class="sec">${snd ? "Who will receive it?" : "Who is sending it?"}</div>
       <input class="input" data-bind="o_name" value="${esc(d.o_name)}" placeholder="${snd ? "Receiver's name" : "Sender's name"}" autocomplete="off">
       <input class="input" data-bind="o_phone" inputmode="tel" value="${esc(d.o_phone)}" placeholder="${snd ? "Receiver's phone e.g. 0977123456" : "Sender's phone e.g. 0977123456"}" autocomplete="off">
+      ${"contacts" in navigator && "ContactsManager" in window ? `<button class="btn btn-ghost btn-sm" data-act="pickcontact" style="margin-top:6px">Pick from my contacts</button>` : ""}
       <div class="small">${snd ? "We text the receiver the delivery code, and the rider calls them on arrival." : "The rider calls the sender when collecting the parcel."}</div>
       <div class="sec">What are we carrying?</div>
       <div class="chips">${["Parcel", "Food", "Documents", "Other"].map((t) => `<button class="chip ${d.item_type === t ? "on" : ""}" data-act="item" data-v="${t}">${t}</button>`).join("")}</div>
@@ -261,8 +265,8 @@ function vBook(svc) {
   return `<div class="screen"><div class="pad">
     ${topbar(title)}
     <div class="card"><div class="route"><div class="dots"><div class="dot"></div><div class="line"></div><div class="sq"></div></div>
-      <div class="fields"><div class="field"><label>${pl[0]}</label><input class="bare" data-bind="pickup" value="${esc(d.pickup)}" placeholder="Type a place or landmark"></div>
-      <div class="field last"><label>${pl[1]}</label><input class="bare" data-bind="dropoff" value="${esc(d.dropoff)}" placeholder="Type a place or landmark"></div></div></div></div>
+      <div class="fields"><div class="field"><label>${pl[0]}</label><input class="bare" data-bind="pickup" list="placesDL" value="${esc(d.pickup)}" placeholder="Type or pick a place" autocomplete="off"></div>
+      <div class="field last"><label>${pl[1]}</label><input class="bare" data-bind="dropoff" list="placesDL" value="${esc(d.dropoff)}" placeholder="Type or pick a place" autocomplete="off"></div></div></div></div>${placesDL()}
     ${extra}
     <div class="spacer"></div>
     <div class="card"><div class="rowline"><span>${SVC[svc]} fee</span><b>${K(fees[svc])}</b></div>${fees.service > 0 ? `<div class="rowline"><span>Service fee</span><b>${K(fees.service)}</b></div>` : ""}<div class="hr"></div><div class="total"><span>Total</span><span>${K(money(svc))}</span></div></div>
@@ -419,7 +423,7 @@ function vDispatch() {
     <input class="input" id="sEmail" type="email" placeholder="Staff email" autocomplete="username">
     <input class="input" id="sPass" type="password" placeholder="Password" autocomplete="current-password">
     <button class="btn btn-green" data-act="login">Sign in</button></div></div>`;
-  const tabsHtml = ["orders", "customers", "riders", "merchants", "agents", "settings"].concat(D.isSuper ? ["operators"] : []).map((t) => `<button class="chip ${D.tab === t ? "on" : ""}" data-act="dtab" data-v="${t}">${t[0].toUpperCase() + t.slice(1)}</button>`).join("");
+  const tabsHtml = ["orders", "customers", "riders", "merchants", "agents", "places", "settings"].concat(D.isSuper ? ["operators"] : []).map((t) => `<button class="chip ${D.tab === t ? "on" : ""}" data-act="dtab" data-v="${t}">${t[0].toUpperCase() + t.slice(1)}</button>`).join("");
   let body = "";
   if (D.tab === "orders") {
     const active = D.orders.filter((o) => !["delivered", "cancelled"].includes(o.status));
@@ -433,6 +437,7 @@ function vDispatch() {
       const clabel = cst === "new" ? (cu && cu.completed >= 3 ? "Regular" : "New customer") : cst[0].toUpperCase() + cst.slice(1);
       return `<div class="d-order">${o.incident_level ? `<div class="note orange" style="border:2px solid #B3261E"><div><b style="color:#B3261E">${o.incident_level === "danger" ? "RIDER IN DANGER. Call them now." : "Rider reported a problem."}</b>${o.incident_note ? " " + esc(o.incident_note) : ""}${rider && rider.phone ? ` <a href="tel:${esc(rider.phone)}" style="color:#B3261E;font-weight:800">Call ${esc(rider.name)}</a>` : ""}<br><button class="btn btn-ghost btn-sm" data-act="clearinc" data-id="${o.id}">Clear alert</button></div></div>` : ""}<div class="d-row" style="justify-content:space-between"><b>${SVC[o.service]} · ${esc(o.code)}</b><span class="badge ${o.status === "delivered" ? "" : o.status === "cancelled" ? "g" : "o"}">${STATUS_TXT[o.status]}</span></div>
         <div class="t2">${esc(o.pickup)} → ${esc(o.dropoff)}</div>
+        ${o.merchant_id ? "" : [o.pickup, o.dropoff].filter((x, i, arr) => x && x.trim().length >= 2 && !knownPlace(x) && arr.indexOf(x) === i).map((x) => `<div class="d-row"><button class="btn btn-ghost btn-sm" data-act="addplace1" data-name="${esc(x)}">+ Add "${esc(x)}" to places</button></div>`).join("")}
         ${o.merchant_id ? `<div class="note blue"><div><b>Shop order · ${esc((D.merchants.find((m) => m.id === o.merchant_id) || {}).name || "Shop")}</b> · ${MST[o.merchant_status] || ""}<br>${esc(itemsText(o.items))}<br>Items ${K(o.items_total)} paid by the customer to the shop (${o.shop_paid_at ? "shop confirmed" : "not confirmed yet"}). Rider collects ${K(Number(o.delivery_fee) + Number(o.service_fee))} cash. Shop fee ${K(o.merchant_fee)} when delivered.</div></div>` : o.receiver_phone ? `<div class="note blue"><div><b>Sender:</b> ${esc(o.sender_name || "")} ${esc(o.sender_phone || "")}<br><b>Receiver:</b> ${esc(o.receiver_name || "")} ${esc(o.receiver_phone)}<br><b>${o.payer === "receiver" ? "Receiver pays" : "Sender pays"}</b> ${o.pay_method === "cash" ? "cash " + (o.payer === "receiver" || o.pay_when !== "pickup" ? "on delivery" : "at pick-up") : "by " + PAY_NAME[o.pay_method]}</div></div>` : ""}
         ${o.details ? `<div class="t2">Note: ${esc(o.details)}${o.budget ? " · Budget " + K(o.budget) : ""}</div>` : ""}
         <div class="t2">${esc(o.customer_name || "Customer")} · <a href="tel:${esc(o.customer_phone)}" style="color:var(--green);font-weight:700">${esc(o.customer_phone)}</a> · <a href="https://wa.me/${intl(o.customer_phone)}" target="_blank" rel="noopener" style="color:var(--green);font-weight:700">WhatsApp</a></div>
@@ -489,6 +494,12 @@ function vDispatch() {
             <label class="btn btn-ghost btn-sm" style="cursor:pointer">${safeImg(o.logo_url) ? "Change logo" : "Add logo"}<input type="file" accept="image/*" data-file="oplogo" data-id="${o.id}" hidden></label></div>
           <div class="d-row"><button class="btn btn-green btn-sm" data-act="opsave" data-id="${o.id}">Save details</button><button class="btn btn-ghost btn-sm" data-act="opstatus" data-id="${o.id}" data-v="${o.status === "active" ? "paused" : "active"}">${o.status === "active" ? "Pause operator" : "Resume operator"}</button><a class="btn btn-ghost btn-sm" href="?op=${esc(o.slug)}" target="_blank" rel="noopener">Open their app</a></div>
           <div class="d-row"><input class="input d-input" id="op-staff-${o.id}" type="email" placeholder="Add staff email" style="flex:1;min-width:160px"><button class="btn btn-ghost btn-sm" data-act="opstaff" data-id="${o.id}">Add staff</button></div></div>`; }).join("") || '<div class="small">Loading…</div>'}</div>`;
+  } else if (D.tab === "places") {
+    body = `<div class="small">These places show as suggestions in the From and To boxes. Add places as you discover them. Customers can still type any other place.</div>
+      <div class="d-order" style="margin-top:12px"><div class="sec">Add places</div><textarea class="input d-input" id="plN" rows="4" placeholder="One place per line, for example:&#10;Mumbwa Main Market&#10;Mumbwa Hospital"></textarea>
+        <div class="d-row"><button class="btn btn-green btn-sm" data-act="addplaces">Add to list</button></div></div>
+      <div class="sec">${placesList.length} place${placesList.length === 1 ? "" : "s"}</div>
+      ${placesList.map((p) => `<div class="rowline"><span>${esc(p.name)}</span><button class="btn btn-ghost btn-sm" style="color:#B3261E;border-color:#B3261E" data-act="delplace" data-id="${p.id}">Remove</button></div>`).join("") || '<div class="small">No places yet.</div>'}`;
   } else if (D.tab === "agents") {
     const dt = (x) => (x ? new Date(x).toLocaleDateString("en-GB") : "");
     body = `<div class="small">Agents register riders and shops for you. When a recruit has done real deliveries the agent earns a bonus. You pay the agent by mobile money, then tap <b>Record payout</b>.</div>
@@ -957,6 +968,17 @@ $app.addEventListener("click", async (e) => {
   else if (a === "who") { draft.who = v; draft.payer = v; if (v === "receiver") draft.pay_method = "cash"; saveDraft(); render(true); }
   else if (a === "payer") { draft.payer = v; if (v === "receiver") draft.pay_method = "cash"; saveDraft(); render(true); }
   else if (a === "paywhen") { draft.pay_when = v; saveDraft(); render(true); }
+  else if (a === "pickcontact") {
+    try {
+      const r = await navigator.contacts.select(["name", "tel"], { multiple: false });
+      if (r && r[0]) {
+        const c = r[0];
+        if (c.tel && c.tel[0]) draft.o_phone = String(c.tel[0]).replace(/[^\d+]/g, "");
+        if (c.name && c.name[0]) draft.o_name = c.name[0];
+        saveDraft(); render(true);
+      }
+    } catch { toast("Could not open your contacts. Please type the number."); }
+  }
   else if (a === "copy") { try { await navigator.clipboard.writeText(v); toast("Number copied"); } catch { toast(v); } }
   else if (a === "topay") {
     const svc = el.dataset.svc;
@@ -1093,6 +1115,18 @@ $app.addEventListener("click", async (e) => {
     } catch (err) { toast(err.message); }
   }
   /* staff: agents */
+  else if (a === "addplaces") {
+    const names = document.getElementById("plN").value.split(/\n|,/).map((x) => x.trim()).filter((x) => x.length >= 2);
+    if (!names.length) return toast("Type at least one place");
+    try { const n = await rpc("deli_staff_add_places", { p_op: dispatch.op, p_names: names }); toast(n + " place" + (n === 1 ? "" : "s") + " added"); await loadPlaces(dispatch.op); render(true); } catch (err) { toast(err.message); }
+  }
+  else if (a === "addplace1") {
+    try { await rpc("deli_staff_add_places", { p_op: dispatch.op, p_names: [el.dataset.name] }); toast("Added to places"); await loadPlaces(dispatch.op); render(true); } catch (err) { toast(err.message); }
+  }
+  else if (a === "delplace") {
+    if (!twice("dpl" + id, "Tap again to remove this place")) return;
+    try { await rpc("deli_staff_remove_place", { p_id: id }); toast("Removed"); await loadPlaces(dispatch.op); render(true); } catch (err) { toast(err.message); }
+  }
   else if (a === "addagent") {
     const g = (i) => document.getElementById(i).value.trim();
     if (g("gaN").length < 2) return toast("Enter the agent's name");
@@ -1204,7 +1238,7 @@ $app.addEventListener("click", async (e) => {
     dispatch.session = data.session; render();
   }
   else if (a === "logout") { await sb.auth.signOut(); dispatch.session = null; location.hash = "#/signin"; render(); }
-  else if (a === "dtab") { dispatch.tab = v; render(true); if (v === "operators" || v === "agents" || v === "merchants") loadDispatch(); }
+  else if (a === "dtab") { dispatch.tab = v; render(true); if (v === "operators" || v === "agents" || v === "merchants") loadDispatch(); if (v === "places") loadPlaces(dispatch.op).then(() => render(true)); }
   else if (a === "refresh") loadDispatch();
   else if (a === "assign") {
     const rid = document.getElementById("rs-" + id).value; if (!rid) return toast("Choose a rider first");
@@ -1315,6 +1349,9 @@ $app.addEventListener("click", async (e) => {
   }
 });
 
+async function loadPlaces(op) {
+  try { const r = await rpc("deli_places", { p_op: op || OP.id }); if (Array.isArray(r)) { placesList = r; store.set("places", r); } } catch {}
+}
 async function loadFees() {
   try { const f = await rpc("deli_fees", { p_op: OP.id }); if (f) { fees = { delivery: Number(f.delivery), errand: Number(f.errand), ride: Number(f.ride), service: Number(f.service) }; } } catch {}
 }
@@ -1329,5 +1366,5 @@ async function loadOperator() {
   } catch {}
   applyBrand();
 }
-loadOperator().then(loadFees).finally(() => render());
+loadOperator().then(() => Promise.all([loadFees(), loadPlaces()])).finally(() => render());
 if (sb) { sb.auth.getSession().then(({ data }) => { if (data && data.session && !dispatch.session) { dispatch.session = data.session; if (location.hash.startsWith("#/account")) render(true); } }).catch(() => {}); }
